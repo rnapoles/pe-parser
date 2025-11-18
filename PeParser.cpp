@@ -1348,8 +1348,203 @@ void PeParser::printImportTableInfo() {
     std::cout << "\n================================" << std::endl;
 }
 
+void PeParser::parseBaseRelocations() {
+    // Clear any existing base relocations
+    baseRelocations.clear();
+    
+    // Get base relocation table data directory (index 5)
+    const uint32_t BASE_RELOCATION_TABLE_INDEX = 5;
+    
+    uint32_t numberOfRvaAndSizes = ntHeaders.is64Bit ? 
+        ntHeaders.optionalHeader64.numberOfRvaAndSizes : 
+        ntHeaders.optionalHeader32.numberOfRvaAndSizes;
+    
+    // Check if base relocation table exists
+    if (numberOfRvaAndSizes <= BASE_RELOCATION_TABLE_INDEX) {
+        return; // No base relocation table
+    }
+    
+    DataDirectory relocationDir = ntHeaders.dataDirectories[BASE_RELOCATION_TABLE_INDEX];
+    
+    if (relocationDir.virtualAddress == 0 || relocationDir.size == 0) {
+        return; // No base relocations
+    }
+    
+    // Convert RVA to file offset
+    uint32_t relocationTableOffset = rvaToFileOffset(relocationDir.virtualAddress);
+    if (relocationTableOffset == 0) {
+        return; // Invalid RVA
+    }
+    
+    // Base relocation block structure (8 bytes header + variable entries)
+    struct BaseRelocationBlock {
+        uint32_t pageRVA;    // Base RVA for this block
+        uint32_t blockSize;  // Size of this block including header
+    };
+    
+    // Read base relocation blocks
+    uint32_t currentOffset = relocationTableOffset;
+    uint32_t endOffset = relocationTableOffset + relocationDir.size;
+    
+    while (currentOffset < endOffset) {
+        // Clear any error flags before seeking
+        file.clear();
+        file.seekg(currentOffset, std::ios::beg);
+        
+        BaseRelocationBlock block;
+        file.read(reinterpret_cast<char*>(&block), sizeof(BaseRelocationBlock));
+        
+        if (file.fail()) {
+            break;
+        }
+        
+        // Check for null block (end of relocations)
+        if (block.pageRVA == 0 && block.blockSize == 0) {
+            break;
+        }
+        
+        // Validate block size
+        if (block.blockSize < sizeof(BaseRelocationBlock) || block.blockSize > relocationDir.size) {
+            break; // Invalid block size
+        }
+        
+        // Calculate number of entries in this block
+        // Each entry is 2 bytes (uint16_t)
+        uint32_t numEntries = (block.blockSize - sizeof(BaseRelocationBlock)) / sizeof(uint16_t);
+        
+        if (numEntries == 0) {
+            currentOffset += block.blockSize;
+            continue;
+        }
+        
+        BaseRelocationEntry entry;
+        entry.pageRVA = block.pageRVA;
+        entry.blockSize = block.blockSize;
+        
+        // Read relocation entries
+        entry.entries.resize(numEntries);
+        file.read(reinterpret_cast<char*>(entry.entries.data()), numEntries * sizeof(uint16_t));
+        
+        if (file.fail()) {
+            break;
+        }
+        
+        // Store relocation block
+        baseRelocations.push_back(entry);
+        
+        // Move to next block
+        currentOffset += block.blockSize;
+    }
+}
+
 void PeParser::printBaseRelocationsInfo() {
-    // To be implemented in task 9
+    std::cout << "\n=== Base Relocations Information ===" << std::endl;
+    
+    if (baseRelocations.empty()) {
+        std::cout << "No base relocations found." << std::endl;
+        std::cout << "====================================" << std::endl;
+        return;
+    }
+    
+    std::cout << "Number of relocation blocks: " << baseRelocations.size() << std::endl;
+    
+    // Count total relocations
+    size_t totalRelocations = 0;
+    for (const auto& block : baseRelocations) {
+        totalRelocations += block.entries.size();
+    }
+    std::cout << "Total relocations: " << totalRelocations << std::endl;
+    
+    std::cout << "\n--- Relocation Blocks ---" << std::endl;
+    
+    // Relocation type names
+    const char* relocationTypes[] = {
+        "ABSOLUTE",      // 0 - Padding, no relocation
+        "HIGH",          // 1 - High 16 bits
+        "LOW",           // 2 - Low 16 bits
+        "HIGHLOW",       // 3 - 32-bit relocation
+        "HIGHADJ",       // 4 - High 16 bits adjusted
+        "MIPS_JMPADDR",  // 5 - MIPS jump address
+        "ARM_MOV32",     // 6 - ARM MOV32
+        "RISCV_HIGH20",  // 7 - RISC-V high 20 bits
+        "THUMB_MOV32",   // 8 - Thumb MOV32
+        "RISCV_LOW12I",  // 9 - RISC-V low 12 bits (I-type)
+        "DIR64"          // 10 - 64-bit relocation
+    };
+    
+    // Display each relocation block
+    for (size_t i = 0; i < baseRelocations.size(); ++i) {
+        const auto& block = baseRelocations[i];
+        
+        std::cout << "\nBlock " << (i + 1) << ":" << std::endl;
+        std::cout << "  Page RVA: 0x" << std::hex << std::setfill('0');
+        std::cout.width(8);
+        std::cout << block.pageRVA << std::dec << std::endl;
+        std::cout << "  Block Size: " << block.blockSize << " bytes" << std::endl;
+        std::cout << "  Number of Entries: " << block.entries.size() << std::endl;
+        
+        // Display relocation statistics for this block
+        std::vector<int> typeCounts(11, 0);
+        
+        for (const auto& entry : block.entries) {
+            // Extract type (high 4 bits) and offset (low 12 bits)
+            uint16_t type = (entry >> 12) & 0x0F;
+            
+            if (type < 11) {
+                typeCounts[type]++;
+            }
+        }
+        
+        std::cout << "  Relocation Types:" << std::endl;
+        for (int type = 0; type < 11; ++type) {
+            if (typeCounts[type] > 0) {
+                std::cout << "    " << relocationTypes[type] << ": " << typeCounts[type] << std::endl;
+            }
+        }
+        
+        // Display first few relocations as examples (limit to 10 per block)
+        if (block.entries.size() > 0) {
+            std::cout << "  Sample Relocations (showing up to 10):" << std::endl;
+            std::cout << "    Type         Offset    Target RVA" << std::endl;
+            std::cout << "    ----------   ------    ----------" << std::endl;
+            
+            size_t displayCount = std::min(block.entries.size(), static_cast<size_t>(10));
+            
+            for (size_t j = 0; j < displayCount; ++j) {
+                uint16_t entry = block.entries[j];
+                
+                // Extract type (high 4 bits) and offset (low 12 bits)
+                uint16_t type = (entry >> 12) & 0x0F;
+                uint16_t offset = entry & 0x0FFF;
+                
+                // Calculate target RVA
+                uint32_t targetRVA = block.pageRVA + offset;
+                
+                std::cout << "    ";
+                std::cout.width(12);
+                std::cout << std::left;
+                if (type < 11) {
+                    std::cout << relocationTypes[type];
+                } else {
+                    std::cout << ("TYPE_" + std::to_string(type));
+                }
+                
+                std::cout << " 0x" << std::hex << std::setfill('0');
+                std::cout.width(4);
+                std::cout << std::right << offset << "    ";
+                
+                std::cout << "0x" << std::setfill('0');
+                std::cout.width(8);
+                std::cout << targetRVA << std::dec << std::endl;
+            }
+            
+            if (block.entries.size() > 10) {
+                std::cout << "    ... and " << (block.entries.size() - 10) << " more" << std::endl;
+            }
+        }
+    }
+    
+    std::cout << "\n====================================" << std::endl;
 }
 
 void PeParser::printImportFunctions() {

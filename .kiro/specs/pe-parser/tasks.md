@@ -101,11 +101,6 @@
 
 - [x] 7. Implement Rich header parsing functionality
 
-
-
-
-
-
   - [x] 7.1 Create parseRichHeader() method
 
     - Search for Rich header signature between DOS header and NT headers
@@ -115,7 +110,6 @@
     - _Requirements: 2.2, 1.1_
 
   - [x] 7.2 Implement printRichHeaderInfo() display method
-
 
     - Display compiler information and build metadata
     - Show Rich header presence/absence status
@@ -136,14 +130,17 @@
     - Provide summary of sections, imports, and exports counts
     - _Requirements: 6.1, 5.5_
 
-- [ ] 9. Implement base relocations parsing and display
-  - [ ] 9.1 Create base relocations parsing functionality
+- [x] 9. Implement base relocations parsing and display
+
+  - [x] 9.1 Create base relocations parsing functionality
+
     - Locate base relocation table using data directory
     - Parse relocation blocks and entries
     - Store relocation information for display
     - _Requirements: 1.1_
 
-  - [ ] 9.2 Implement printBaseRelocationsInfo() display method
+  - [x] 9.2 Implement printBaseRelocationsInfo() display method
+
     - Display base relocation information and statistics
     - Show relocation types and target addresses
     - _Requirements: 6.7_

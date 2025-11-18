@@ -161,6 +161,13 @@ struct ExportEntry {
     uint32_t rva;
 };
 
+// Base Relocation Entry structure
+struct BaseRelocationEntry {
+    uint32_t pageRVA;              // Base RVA for this block
+    uint32_t blockSize;            // Size of this relocation block
+    std::vector<uint16_t> entries; // Relocation entries (type + offset)
+};
+
 // Main PE Parser class
 class PeParser {
 private:
@@ -176,6 +183,7 @@ private:
     std::vector<SectionHeader> sectionHeaders;
     std::vector<ImportEntry> imports;
     std::vector<ExportEntry> exports;
+    std::vector<BaseRelocationEntry> baseRelocations;
     
     // Helper methods
     template<typename T> T readData(size_t offset);
@@ -199,6 +207,7 @@ public:
     void parseSectionHeaders();
     void parseImports();
     void parseExports();
+    void parseBaseRelocations();
     
     // Information methods
     void printFileInfo();
