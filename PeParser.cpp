@@ -98,7 +98,21 @@ void PeParser::parseFile() {
 }
 
 void PeParser::parseDOSHeader() {
-    // To be implemented in task 2
+    // Seek to beginning of file
+    file.seekg(0, std::ios::beg);
+    
+    // Read the entire DOS header structure (64 bytes)
+    file.read(reinterpret_cast<char*>(&dosHeader), sizeof(DOSHeader));
+    
+    // Validate DOS signature (MZ magic number = 0x5A4D)
+    if (dosHeader.e_magic != 0x5A4D) {
+        throw std::runtime_error("Invalid DOS signature: Expected MZ (0x5A4D)");
+    }
+    
+    // Additional validation: check if e_lfanew is reasonable
+    if (dosHeader.e_lfanew < 64 || dosHeader.e_lfanew > 0x10000000) {
+        throw std::runtime_error("Invalid e_lfanew offset in DOS header");
+    }
 }
 
 void PeParser::parseRichHeader() {
@@ -127,7 +141,39 @@ void PeParser::printFileInfo() {
 }
 
 void PeParser::printDOSHeaderInfo() {
-    // To be implemented in task 2
+    std::cout << "\n=== DOS Header Information ===" << std::endl;
+    std::cout << "File Offset: 0x00000000" << std::endl;
+    
+    // Display magic number with validation status
+    std::cout << "Magic Number (e_magic): 0x" << std::hex << dosHeader.e_magic << std::dec;
+    if (dosHeader.e_magic == 0x5A4D) {
+        std::cout << " (MZ) - Valid" << std::endl;
+    } else {
+        std::cout << " - Invalid (Expected 0x5A4D)" << std::endl;
+    }
+    
+    // Display key DOS header fields
+    std::cout << "Bytes on Last Page (e_cblp): " << dosHeader.e_cblp << std::endl;
+    std::cout << "Pages in File (e_cp): " << dosHeader.e_cp << std::endl;
+    std::cout << "Relocations (e_crlc): " << dosHeader.e_crlc << std::endl;
+    std::cout << "Size of Header in Paragraphs (e_cparhdr): " << dosHeader.e_cparhdr << std::endl;
+    std::cout << "Minimum Extra Paragraphs (e_minalloc): " << dosHeader.e_minalloc << std::endl;
+    std::cout << "Maximum Extra Paragraphs (e_maxalloc): " << dosHeader.e_maxalloc << std::endl;
+    std::cout << "Initial SS Value (e_ss): 0x" << std::hex << dosHeader.e_ss << std::dec << std::endl;
+    std::cout << "Initial SP Value (e_sp): 0x" << std::hex << dosHeader.e_sp << std::dec << std::endl;
+    std::cout << "Checksum (e_csum): 0x" << std::hex << dosHeader.e_csum << std::dec << std::endl;
+    std::cout << "Initial IP Value (e_ip): 0x" << std::hex << dosHeader.e_ip << std::dec << std::endl;
+    std::cout << "Initial CS Value (e_cs): 0x" << std::hex << dosHeader.e_cs << std::dec << std::endl;
+    std::cout << "File Address of Relocation Table (e_lfarlc): 0x" << std::hex << dosHeader.e_lfarlc << std::dec << std::endl;
+    std::cout << "Overlay Number (e_ovno): " << dosHeader.e_ovno << std::endl;
+    std::cout << "OEM Identifier (e_oemid): " << dosHeader.e_oemid << std::endl;
+    std::cout << "OEM Information (e_oeminfo): " << dosHeader.e_oeminfo << std::endl;
+    
+    // Display e_lfanew - critical field pointing to NT headers
+    std::cout << "PE Header Offset (e_lfanew): 0x" << std::hex << dosHeader.e_lfanew << std::dec;
+    std::cout << " (" << dosHeader.e_lfanew << " bytes)" << std::endl;
+    
+    std::cout << "================================" << std::endl;
 }
 
 void PeParser::printRichHeaderInfo() {
