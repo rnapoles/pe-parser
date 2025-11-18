@@ -23,22 +23,33 @@
     - Show file offset information and validation status
     - _Requirements: 6.2_
 
-- [ ] 3. Implement NT headers parsing functionality
-  - [ ] 3.1 Create parseNTHeaders() method for PE signature and headers
+- [x] 3. Implement NT headers parsing functionality
+
+
+
+
+
+  - [x] 3.1 Create parseNTHeaders() method for PE signature and headers
+
+
     - Seek to NT headers offset using e_lfanew from DOS header
     - Validate PE signature (PE\0\0)
     - Read file header (20 bytes) and optional header (224/240 bytes)
     - Determine 32-bit vs 64-bit architecture from optional header magic
     - _Requirements: 2.3, 2.5, 1.1_
 
-  - [ ] 3.2 Implement architecture and file type detection methods
+  - [x] 3.2 Implement architecture and file type detection methods
+
+
     - Create is64Bits() method checking optional header magic value
     - Create isExe() method checking characteristics field for executable flag
     - Create isDLL() method checking characteristics field for DLL flag
     - Create getTargetOS() method extracting OS version from optional header
     - _Requirements: 5.1, 5.2, 5.3, 5.4, 2.4_
 
-  - [ ] 3.3 Implement printNTHeadersInfo() display method
+  - [x] 3.3 Implement printNTHeadersInfo() display method
+
+
     - Display file header information (machine type, number of sections, timestamp)
     - Display optional header information (entry point, image base, subsystem)
     - Show file characteristics and architecture information

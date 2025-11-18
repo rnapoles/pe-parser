@@ -120,7 +120,38 @@ void PeParser::parseRichHeader() {
 }
 
 void PeParser::parseNTHeaders() {
-    // To be implemented in task 3
+    // Seek to NT headers offset using e_lfanew from DOS header
+    file.seekg(dosHeader.e_lfanew, std::ios::beg);
+    
+    // Read and validate PE signature (4 bytes: "PE\0\0")
+    file.read(reinterpret_cast<char*>(&ntHeaders.signature), sizeof(ntHeaders.signature));
+    
+    if (ntHeaders.signature != 0x00004550) { // "PE\0\0" in little-endian
+        throw std::runtime_error("Invalid PE signature: Expected PE\\0\\0 (0x00004550)");
+    }
+    
+    // Read file header (20 bytes)
+    file.read(reinterpret_cast<char*>(&ntHeaders.fileHeader), sizeof(FileHeader));
+    
+    // Read the magic number from optional header to determine architecture
+    uint16_t magic;
+    file.read(reinterpret_cast<char*>(&magic), sizeof(magic));
+    
+    // Seek back to read the full optional header
+    file.seekg(dosHeader.e_lfanew + 4 + sizeof(FileHeader), std::ios::beg);
+    
+    // Determine 32-bit vs 64-bit architecture from optional header magic
+    if (magic == 0x10b) {
+        // 32-bit PE (PE32)
+        ntHeaders.is64Bit = false;
+        file.read(reinterpret_cast<char*>(&ntHeaders.optionalHeader32), sizeof(OptionalHeader32));
+    } else if (magic == 0x20b) {
+        // 64-bit PE (PE32+)
+        ntHeaders.is64Bit = true;
+        file.read(reinterpret_cast<char*>(&ntHeaders.optionalHeader64), sizeof(OptionalHeader64));
+    } else {
+        throw std::runtime_error("Invalid optional header magic: Unknown PE format");
+    }
 }
 
 void PeParser::parseSectionHeaders() {
@@ -181,7 +212,181 @@ void PeParser::printRichHeaderInfo() {
 }
 
 void PeParser::printNTHeadersInfo() {
-    // To be implemented in task 3
+    std::cout << "\n=== NT Headers Information ===" << std::endl;
+    std::cout << "File Offset: 0x" << std::hex << dosHeader.e_lfanew << std::dec << std::endl;
+    
+    // Display PE signature
+    std::cout << "\nPE Signature: 0x" << std::hex << ntHeaders.signature << std::dec;
+    if (ntHeaders.signature == 0x00004550) {
+        std::cout << " (PE\\0\\0) - Valid" << std::endl;
+    } else {
+        std::cout << " - Invalid" << std::endl;
+    }
+    
+    // Display file header information
+    std::cout << "\n--- File Header ---" << std::endl;
+    
+    // Machine type
+    std::cout << "Machine Type: 0x" << std::hex << ntHeaders.fileHeader.machine << std::dec << " (";
+    switch (ntHeaders.fileHeader.machine) {
+        case 0x014c: std::cout << "Intel 386"; break;
+        case 0x0162: std::cout << "MIPS R3000"; break;
+        case 0x0166: std::cout << "MIPS R4000"; break;
+        case 0x0168: std::cout << "MIPS R10000"; break;
+        case 0x0169: std::cout << "MIPS little-endian WCE v2"; break;
+        case 0x0184: std::cout << "Alpha AXP"; break;
+        case 0x01a2: std::cout << "Hitachi SH3"; break;
+        case 0x01a3: std::cout << "Hitachi SH3 DSP"; break;
+        case 0x01a6: std::cout << "Hitachi SH4"; break;
+        case 0x01a8: std::cout << "Hitachi SH5"; break;
+        case 0x01c0: std::cout << "ARM little endian"; break;
+        case 0x01c2: std::cout << "Thumb"; break;
+        case 0x01c4: std::cout << "ARMv7 Thumb"; break;
+        case 0x01d3: std::cout << "Matsushita AM33"; break;
+        case 0x01f0: std::cout << "PowerPC little endian"; break;
+        case 0x01f1: std::cout << "PowerPC with FPU"; break;
+        case 0x0200: std::cout << "Intel IA64"; break;
+        case 0x0266: std::cout << "MIPS16"; break;
+        case 0x0284: std::cout << "Alpha AXP 64-bit"; break;
+        case 0x0366: std::cout << "MIPS with FPU"; break;
+        case 0x0466: std::cout << "MIPS16 with FPU"; break;
+        case 0x0ebc: std::cout << "EFI Byte Code"; break;
+        case 0x8664: std::cout << "AMD64 (x64)"; break;
+        case 0x9041: std::cout << "Mitsubishi M32R little endian"; break;
+        case 0xaa64: std::cout << "ARM64 little endian"; break;
+        case 0xc0ee: std::cout << "clr pure MSIL"; break;
+        default: std::cout << "Unknown"; break;
+    }
+    std::cout << ")" << std::endl;
+    
+    std::cout << "Number of Sections: " << ntHeaders.fileHeader.numberOfSections << std::endl;
+    
+    // Timestamp
+    std::cout << "Time/Date Stamp: 0x" << std::hex << ntHeaders.fileHeader.timeDateStamp << std::dec;
+    std::cout << " (" << ntHeaders.fileHeader.timeDateStamp << ")" << std::endl;
+    
+    std::cout << "Pointer to Symbol Table: 0x" << std::hex << ntHeaders.fileHeader.pointerToSymbolTable << std::dec << std::endl;
+    std::cout << "Number of Symbols: " << ntHeaders.fileHeader.numberOfSymbols << std::endl;
+    std::cout << "Size of Optional Header: " << ntHeaders.fileHeader.sizeOfOptionalHeader << " bytes" << std::endl;
+    
+    // Characteristics
+    std::cout << "Characteristics: 0x" << std::hex << ntHeaders.fileHeader.characteristics << std::dec << " (";
+    bool first = true;
+    if (ntHeaders.fileHeader.characteristics & 0x0001) { if (!first) std::cout << ", "; std::cout << "RELOCS_STRIPPED"; first = false; }
+    if (ntHeaders.fileHeader.characteristics & 0x0002) { if (!first) std::cout << ", "; std::cout << "EXECUTABLE"; first = false; }
+    if (ntHeaders.fileHeader.characteristics & 0x0004) { if (!first) std::cout << ", "; std::cout << "LINE_NUMS_STRIPPED"; first = false; }
+    if (ntHeaders.fileHeader.characteristics & 0x0008) { if (!first) std::cout << ", "; std::cout << "LOCAL_SYMS_STRIPPED"; first = false; }
+    if (ntHeaders.fileHeader.characteristics & 0x0010) { if (!first) std::cout << ", "; std::cout << "AGGRESSIVE_WS_TRIM"; first = false; }
+    if (ntHeaders.fileHeader.characteristics & 0x0020) { if (!first) std::cout << ", "; std::cout << "LARGE_ADDRESS_AWARE"; first = false; }
+    if (ntHeaders.fileHeader.characteristics & 0x0080) { if (!first) std::cout << ", "; std::cout << "BYTES_REVERSED_LO"; first = false; }
+    if (ntHeaders.fileHeader.characteristics & 0x0100) { if (!first) std::cout << ", "; std::cout << "32BIT_MACHINE"; first = false; }
+    if (ntHeaders.fileHeader.characteristics & 0x0200) { if (!first) std::cout << ", "; std::cout << "DEBUG_STRIPPED"; first = false; }
+    if (ntHeaders.fileHeader.characteristics & 0x0400) { if (!first) std::cout << ", "; std::cout << "REMOVABLE_RUN_FROM_SWAP"; first = false; }
+    if (ntHeaders.fileHeader.characteristics & 0x0800) { if (!first) std::cout << ", "; std::cout << "NET_RUN_FROM_SWAP"; first = false; }
+    if (ntHeaders.fileHeader.characteristics & 0x1000) { if (!first) std::cout << ", "; std::cout << "SYSTEM"; first = false; }
+    if (ntHeaders.fileHeader.characteristics & 0x2000) { if (!first) std::cout << ", "; std::cout << "DLL"; first = false; }
+    if (ntHeaders.fileHeader.characteristics & 0x4000) { if (!first) std::cout << ", "; std::cout << "UP_SYSTEM_ONLY"; first = false; }
+    if (ntHeaders.fileHeader.characteristics & 0x8000) { if (!first) std::cout << ", "; std::cout << "BYTES_REVERSED_HI"; first = false; }
+    std::cout << ")" << std::endl;
+    
+    // Display optional header information
+    std::cout << "\n--- Optional Header ---" << std::endl;
+    
+    if (ntHeaders.is64Bit) {
+        std::cout << "Magic: 0x" << std::hex << ntHeaders.optionalHeader64.magic << std::dec << " (PE32+ / 64-bit)" << std::endl;
+        std::cout << "Linker Version: " << (int)ntHeaders.optionalHeader64.majorLinkerVersion << "." << (int)ntHeaders.optionalHeader64.minorLinkerVersion << std::endl;
+        std::cout << "Size of Code: " << ntHeaders.optionalHeader64.sizeOfCode << " bytes" << std::endl;
+        std::cout << "Size of Initialized Data: " << ntHeaders.optionalHeader64.sizeOfInitializedData << " bytes" << std::endl;
+        std::cout << "Size of Uninitialized Data: " << ntHeaders.optionalHeader64.sizeOfUninitializedData << " bytes" << std::endl;
+        std::cout << "Entry Point Address: 0x" << std::hex << ntHeaders.optionalHeader64.addressOfEntryPoint << std::dec << std::endl;
+        std::cout << "Base of Code: 0x" << std::hex << ntHeaders.optionalHeader64.baseOfCode << std::dec << std::endl;
+        std::cout << "Image Base: 0x" << std::hex << ntHeaders.optionalHeader64.imageBase << std::dec << std::endl;
+        std::cout << "Section Alignment: " << ntHeaders.optionalHeader64.sectionAlignment << " bytes" << std::endl;
+        std::cout << "File Alignment: " << ntHeaders.optionalHeader64.fileAlignment << " bytes" << std::endl;
+        std::cout << "OS Version: " << ntHeaders.optionalHeader64.majorOperatingSystemVersion << "." << ntHeaders.optionalHeader64.minorOperatingSystemVersion << std::endl;
+        std::cout << "Image Version: " << ntHeaders.optionalHeader64.majorImageVersion << "." << ntHeaders.optionalHeader64.minorImageVersion << std::endl;
+        std::cout << "Subsystem Version: " << ntHeaders.optionalHeader64.majorSubsystemVersion << "." << ntHeaders.optionalHeader64.minorSubsystemVersion << std::endl;
+        std::cout << "Size of Image: " << ntHeaders.optionalHeader64.sizeOfImage << " bytes" << std::endl;
+        std::cout << "Size of Headers: " << ntHeaders.optionalHeader64.sizeOfHeaders << " bytes" << std::endl;
+        std::cout << "Checksum: 0x" << std::hex << ntHeaders.optionalHeader64.checkSum << std::dec << std::endl;
+        
+        // Subsystem
+        std::cout << "Subsystem: " << ntHeaders.optionalHeader64.subsystem << " (";
+        switch (ntHeaders.optionalHeader64.subsystem) {
+            case 1: std::cout << "Native"; break;
+            case 2: std::cout << "Windows GUI"; break;
+            case 3: std::cout << "Windows CUI"; break;
+            case 5: std::cout << "OS/2 CUI"; break;
+            case 7: std::cout << "POSIX CUI"; break;
+            case 9: std::cout << "Windows CE GUI"; break;
+            case 10: std::cout << "EFI Application"; break;
+            case 11: std::cout << "EFI Boot Service Driver"; break;
+            case 12: std::cout << "EFI Runtime Driver"; break;
+            case 13: std::cout << "EFI ROM"; break;
+            case 14: std::cout << "XBOX"; break;
+            case 16: std::cout << "Windows Boot Application"; break;
+            default: std::cout << "Unknown"; break;
+        }
+        std::cout << ")" << std::endl;
+        
+        std::cout << "DLL Characteristics: 0x" << std::hex << ntHeaders.optionalHeader64.dllCharacteristics << std::dec << std::endl;
+        std::cout << "Number of RVA and Sizes: " << ntHeaders.optionalHeader64.numberOfRvaAndSizes << std::endl;
+    } else {
+        std::cout << "Magic: 0x" << std::hex << ntHeaders.optionalHeader32.magic << std::dec << " (PE32 / 32-bit)" << std::endl;
+        std::cout << "Linker Version: " << (int)ntHeaders.optionalHeader32.majorLinkerVersion << "." << (int)ntHeaders.optionalHeader32.minorLinkerVersion << std::endl;
+        std::cout << "Size of Code: " << ntHeaders.optionalHeader32.sizeOfCode << " bytes" << std::endl;
+        std::cout << "Size of Initialized Data: " << ntHeaders.optionalHeader32.sizeOfInitializedData << " bytes" << std::endl;
+        std::cout << "Size of Uninitialized Data: " << ntHeaders.optionalHeader32.sizeOfUninitializedData << " bytes" << std::endl;
+        std::cout << "Entry Point Address: 0x" << std::hex << ntHeaders.optionalHeader32.addressOfEntryPoint << std::dec << std::endl;
+        std::cout << "Base of Code: 0x" << std::hex << ntHeaders.optionalHeader32.baseOfCode << std::dec << std::endl;
+        std::cout << "Base of Data: 0x" << std::hex << ntHeaders.optionalHeader32.baseOfData << std::dec << std::endl;
+        std::cout << "Image Base: 0x" << std::hex << ntHeaders.optionalHeader32.imageBase << std::dec << std::endl;
+        std::cout << "Section Alignment: " << ntHeaders.optionalHeader32.sectionAlignment << " bytes" << std::endl;
+        std::cout << "File Alignment: " << ntHeaders.optionalHeader32.fileAlignment << " bytes" << std::endl;
+        std::cout << "OS Version: " << ntHeaders.optionalHeader32.majorOperatingSystemVersion << "." << ntHeaders.optionalHeader32.minorOperatingSystemVersion << std::endl;
+        std::cout << "Image Version: " << ntHeaders.optionalHeader32.majorImageVersion << "." << ntHeaders.optionalHeader32.minorImageVersion << std::endl;
+        std::cout << "Subsystem Version: " << ntHeaders.optionalHeader32.majorSubsystemVersion << "." << ntHeaders.optionalHeader32.minorSubsystemVersion << std::endl;
+        std::cout << "Size of Image: " << ntHeaders.optionalHeader32.sizeOfImage << " bytes" << std::endl;
+        std::cout << "Size of Headers: " << ntHeaders.optionalHeader32.sizeOfHeaders << " bytes" << std::endl;
+        std::cout << "Checksum: 0x" << std::hex << ntHeaders.optionalHeader32.checkSum << std::dec << std::endl;
+        
+        // Subsystem
+        std::cout << "Subsystem: " << ntHeaders.optionalHeader32.subsystem << " (";
+        switch (ntHeaders.optionalHeader32.subsystem) {
+            case 1: std::cout << "Native"; break;
+            case 2: std::cout << "Windows GUI"; break;
+            case 3: std::cout << "Windows CUI"; break;
+            case 5: std::cout << "OS/2 CUI"; break;
+            case 7: std::cout << "POSIX CUI"; break;
+            case 9: std::cout << "Windows CE GUI"; break;
+            case 10: std::cout << "EFI Application"; break;
+            case 11: std::cout << "EFI Boot Service Driver"; break;
+            case 12: std::cout << "EFI Runtime Driver"; break;
+            case 13: std::cout << "EFI ROM"; break;
+            case 14: std::cout << "XBOX"; break;
+            case 16: std::cout << "Windows Boot Application"; break;
+            default: std::cout << "Unknown"; break;
+        }
+        std::cout << ")" << std::endl;
+        
+        std::cout << "DLL Characteristics: 0x" << std::hex << ntHeaders.optionalHeader32.dllCharacteristics << std::dec << std::endl;
+        std::cout << "Number of RVA and Sizes: " << ntHeaders.optionalHeader32.numberOfRvaAndSizes << std::endl;
+    }
+    
+    // Show file characteristics and architecture information
+    std::cout << "\n--- File Type and Architecture ---" << std::endl;
+    std::cout << "Architecture: " << (is64Bits() ? "64-bit (x64)" : "32-bit (x86)") << std::endl;
+    std::cout << "File Type: ";
+    if (isDLL()) {
+        std::cout << "Dynamic Link Library (DLL)" << std::endl;
+    } else if (isExe()) {
+        std::cout << "Executable (EXE)" << std::endl;
+    } else {
+        std::cout << "Other" << std::endl;
+    }
+    std::cout << "Target OS: " << getTargetOS() << std::endl;
+    
+    std::cout << "================================" << std::endl;
 }
 
 void PeParser::printSectionHeadersInfo() {
@@ -206,8 +411,43 @@ void PeParser::printExportFunctions() {
 
 // Placeholder implementations for query methods
 std::string PeParser::getTargetOS() {
-    // To be implemented in task 3
-    return "";
+    // Extract OS version from optional header
+    uint16_t majorVersion, minorVersion;
+    
+    if (ntHeaders.is64Bit) {
+        majorVersion = ntHeaders.optionalHeader64.majorOperatingSystemVersion;
+        minorVersion = ntHeaders.optionalHeader64.minorOperatingSystemVersion;
+    } else {
+        majorVersion = ntHeaders.optionalHeader32.majorOperatingSystemVersion;
+        minorVersion = ntHeaders.optionalHeader32.minorOperatingSystemVersion;
+    }
+    
+    // Map version numbers to Windows versions
+    std::string osVersion = "Windows ";
+    
+    if (majorVersion == 4 && minorVersion == 0) {
+        osVersion += "NT 4.0 / 95";
+    } else if (majorVersion == 5 && minorVersion == 0) {
+        osVersion += "2000";
+    } else if (majorVersion == 5 && minorVersion == 1) {
+        osVersion += "XP";
+    } else if (majorVersion == 5 && minorVersion == 2) {
+        osVersion += "Server 2003 / XP 64-bit";
+    } else if (majorVersion == 6 && minorVersion == 0) {
+        osVersion += "Vista / Server 2008";
+    } else if (majorVersion == 6 && minorVersion == 1) {
+        osVersion += "7 / Server 2008 R2";
+    } else if (majorVersion == 6 && minorVersion == 2) {
+        osVersion += "8 / Server 2012";
+    } else if (majorVersion == 6 && minorVersion == 3) {
+        osVersion += "8.1 / Server 2012 R2";
+    } else if (majorVersion == 10 && minorVersion == 0) {
+        osVersion += "10 / Server 2016+";
+    } else {
+        osVersion += std::to_string(majorVersion) + "." + std::to_string(minorVersion);
+    }
+    
+    return osVersion;
 }
 
 std::vector<std::string> PeParser::getExportFunctionNames() {
@@ -221,16 +461,27 @@ std::vector<std::string> PeParser::getImportFunctionNames() {
 }
 
 bool PeParser::isExe() {
-    // To be implemented in task 3
-    return false;
+    // Check characteristics field for executable flag
+    // IMAGE_FILE_EXECUTABLE_IMAGE = 0x0002
+    // IMAGE_FILE_DLL = 0x2000
+    // An EXE has the executable flag set but NOT the DLL flag
+    const uint16_t IMAGE_FILE_EXECUTABLE_IMAGE = 0x0002;
+    const uint16_t IMAGE_FILE_DLL = 0x2000;
+    
+    return (ntHeaders.fileHeader.characteristics & IMAGE_FILE_EXECUTABLE_IMAGE) &&
+           !(ntHeaders.fileHeader.characteristics & IMAGE_FILE_DLL);
 }
 
 bool PeParser::isDLL() {
-    // To be implemented in task 3
-    return false;
+    // Check characteristics field for DLL flag
+    // IMAGE_FILE_DLL = 0x2000
+    const uint16_t IMAGE_FILE_DLL = 0x2000;
+    
+    return (ntHeaders.fileHeader.characteristics & IMAGE_FILE_DLL) != 0;
 }
 
 bool PeParser::is64Bits() {
-    // To be implemented in task 3
-    return false;
+    // Check optional header magic value
+    // 0x10b = PE32 (32-bit), 0x20b = PE32+ (64-bit)
+    return ntHeaders.is64Bit;
 }
