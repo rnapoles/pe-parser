@@ -66,15 +66,23 @@
     - Format section information in readable table format
     - _Requirements: 6.5, 3.2_
 
-- [ ] 5. Implement import table parsing functionality
-  - [ ] 5.1 Create parseImports() method
+- [x] 5. Implement import table parsing functionality
+
+
+
+
+
+  - [x] 5.1 Create parseImports() method
+
     - Locate import table using data directory from optional header
     - Parse import descriptors to get DLL names and function lists
     - Handle both named imports and ordinal imports
     - Store import information in imports vector
     - _Requirements: 4.1, 4.5, 1.1_
 
-  - [ ] 5.2 Implement import information access methods
+
+  - [x] 5.2 Implement import information access methods
+
     - Create getImportFunctionNames() method returning vector of function names
     - Create printImportTableInfo() method displaying import summary
     - Create printImportFunctions() method listing all imported functions with DLL names
