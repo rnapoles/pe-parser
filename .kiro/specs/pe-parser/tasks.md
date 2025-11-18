@@ -68,10 +68,6 @@
 
 - [x] 5. Implement import table parsing functionality
 
-
-
-
-
   - [x] 5.1 Create parseImports() method
 
     - Locate import table using data directory from optional header
@@ -79,7 +75,6 @@
     - Handle both named imports and ordinal imports
     - Store import information in imports vector
     - _Requirements: 4.1, 4.5, 1.1_
-
 
   - [x] 5.2 Implement import information access methods
 

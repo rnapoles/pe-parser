@@ -93,6 +93,33 @@ std::string PeParser::readString(size_t offset, size_t maxLength) {
     return result;
 }
 
+// Convert RVA (Relative Virtual Address) to file offset
+uint32_t PeParser::rvaToFileOffset(uint32_t rva) {
+    // Find the section that contains this RVA
+    for (const auto& section : sectionHeaders) {
+        uint32_t sectionStart = section.virtualAddress;
+        uint32_t sectionEnd = sectionStart + std::max(section.virtualSize, section.sizeOfRawData);
+        
+        if (rva >= sectionStart && rva < sectionEnd) {
+            // Calculate offset within the section
+            uint32_t offsetInSection = rva - sectionStart;
+            return section.pointerToRawData + offsetInSection;
+        }
+    }
+    
+    // If not found in any section, return the RVA as-is (some files have RVAs that map directly)
+    return rva;
+}
+
+// Read null-terminated string at RVA
+std::string PeParser::readStringAtRVA(uint32_t rva, size_t maxLength) {
+    uint32_t fileOffset = rvaToFileOffset(rva);
+    if (fileOffset == 0) {
+        return "";
+    }
+    return readString(fileOffset, maxLength);
+}
+
 // Placeholder implementations for parsing methods
 void PeParser::parseFile() {
     // To be implemented in later tasks
@@ -134,22 +161,38 @@ void PeParser::parseNTHeaders() {
     // Read file header (20 bytes)
     file.read(reinterpret_cast<char*>(&ntHeaders.fileHeader), sizeof(FileHeader));
     
-    // Read the magic number from optional header to determine architecture
-    uint16_t magic;
-    file.read(reinterpret_cast<char*>(&magic), sizeof(magic));
+    // Check if optional header exists
+    if (ntHeaders.fileHeader.sizeOfOptionalHeader == 0) {
+        throw std::runtime_error("No optional header present");
+    }
     
-    // Seek back to read the full optional header
-    file.seekg(dosHeader.e_lfanew + 4 + sizeof(FileHeader), std::ios::beg);
+    // Peek at the magic number from optional header to determine architecture
+    uint16_t magic;
+    std::streampos optionalHeaderStart = file.tellg();
+    file.read(reinterpret_cast<char*>(&magic), sizeof(magic));
+    file.seekg(optionalHeaderStart, std::ios::beg);  // Seek back to start of optional header
     
     // Determine 32-bit vs 64-bit architecture from optional header magic
     if (magic == 0x10b) {
-        // 32-bit PE (PE32)
+        // 32-bit PE (PE32) - base size is 96 bytes
         ntHeaders.is64Bit = false;
         file.read(reinterpret_cast<char*>(&ntHeaders.optionalHeader32), sizeof(OptionalHeader32));
+        
+        // Read data directories if present
+        if (ntHeaders.optionalHeader32.numberOfRvaAndSizes > 0 && ntHeaders.optionalHeader32.numberOfRvaAndSizes <= 16) {
+            file.read(reinterpret_cast<char*>(&ntHeaders.dataDirectories), 
+                     ntHeaders.optionalHeader32.numberOfRvaAndSizes * sizeof(DataDirectory));
+        }
     } else if (magic == 0x20b) {
-        // 64-bit PE (PE32+)
+        // 64-bit PE (PE32+) - base size is 112 bytes
         ntHeaders.is64Bit = true;
         file.read(reinterpret_cast<char*>(&ntHeaders.optionalHeader64), sizeof(OptionalHeader64));
+        
+        // Read data directories if present
+        if (ntHeaders.optionalHeader64.numberOfRvaAndSizes > 0 && ntHeaders.optionalHeader64.numberOfRvaAndSizes <= 16) {
+            file.read(reinterpret_cast<char*>(&ntHeaders.dataDirectories), 
+                     ntHeaders.optionalHeader64.numberOfRvaAndSizes * sizeof(DataDirectory));
+        }
     } else {
         throw std::runtime_error("Invalid optional header magic: Unknown PE format");
     }
@@ -220,7 +263,179 @@ void PeParser::parseSectionHeaders() {
 }
 
 void PeParser::parseImports() {
-    // To be implemented in task 5
+    // Clear any existing imports
+    imports.clear();
+    
+    // Get import table data directory (index 1)
+    const uint32_t IMPORT_TABLE_INDEX = 1;
+    
+    uint32_t numberOfRvaAndSizes = ntHeaders.is64Bit ? 
+        ntHeaders.optionalHeader64.numberOfRvaAndSizes : 
+        ntHeaders.optionalHeader32.numberOfRvaAndSizes;
+    
+    if (numberOfRvaAndSizes <= IMPORT_TABLE_INDEX) {
+        return; // No import table
+    }
+    
+    DataDirectory importDir = ntHeaders.dataDirectories[IMPORT_TABLE_INDEX];
+    
+    // Check if import table exists
+    if (importDir.virtualAddress == 0 || importDir.size == 0) {
+        return; // No imports
+    }
+    
+    // Convert RVA to file offset
+    uint32_t importTableOffset = rvaToFileOffset(importDir.virtualAddress);
+    if (importTableOffset == 0) {
+        return; // Invalid RVA
+    }
+    
+    // Import descriptor structure (20 bytes)
+    struct ImportDescriptor {
+        uint32_t originalFirstThunk;  // RVA to Import Lookup Table (ILT)
+        uint32_t timeDateStamp;
+        uint32_t forwarderChain;
+        uint32_t nameRVA;             // RVA to DLL name
+        uint32_t firstThunk;          // RVA to Import Address Table (IAT)
+    };
+    
+    // Read import descriptors until we hit a null descriptor
+    uint32_t currentOffset = importTableOffset;
+    
+    while (true) {
+        // Clear any error flags before seeking
+        file.clear();
+        file.seekg(currentOffset, std::ios::beg);
+        
+        ImportDescriptor descriptor;
+        file.read(reinterpret_cast<char*>(&descriptor), sizeof(ImportDescriptor));
+        
+        if (file.fail()) {
+            break;
+        }
+        
+        // Check for null descriptor (end of import table)
+        if (descriptor.nameRVA == 0 && descriptor.firstThunk == 0) {
+            break;
+        }
+        
+        // Read DLL name
+        std::string dllName = readStringAtRVA(descriptor.nameRVA);
+        if (dllName.empty()) {
+            currentOffset += sizeof(ImportDescriptor);
+            continue;
+        }
+        
+        ImportEntry entry;
+        entry.dllName = dllName;
+        
+        // Use originalFirstThunk if available, otherwise use firstThunk
+        uint32_t thunkRVA = descriptor.originalFirstThunk != 0 ? 
+                            descriptor.originalFirstThunk : descriptor.firstThunk;
+        
+        if (thunkRVA == 0) {
+            currentOffset += sizeof(ImportDescriptor);
+            continue;
+        }
+        
+        uint32_t thunkOffset = rvaToFileOffset(thunkRVA);
+        if (thunkOffset == 0) {
+            currentOffset += sizeof(ImportDescriptor);
+            continue;
+        }
+        
+        // Read import lookup table entries
+        file.clear();  // Clear any error flags
+        file.seekg(thunkOffset, std::ios::beg);
+        
+        if (ntHeaders.is64Bit) {
+            // 64-bit thunks
+            const uint64_t ORDINAL_FLAG_64 = 0x8000000000000000ULL;
+            
+            while (true) {
+                // Save current position in thunk table
+                std::streampos thunkPos = file.tellg();
+                
+                uint64_t thunkData;
+                file.read(reinterpret_cast<char*>(&thunkData), sizeof(thunkData));
+                
+                if (file.fail() || thunkData == 0) {
+                    break;
+                }
+                
+                // Check if import by ordinal
+                if (thunkData & ORDINAL_FLAG_64) {
+                    // Import by ordinal
+                    uint32_t ordinal = static_cast<uint32_t>(thunkData & 0xFFFF);
+                    entry.ordinals.push_back(ordinal);
+                    entry.functionNames.push_back("Ordinal_" + std::to_string(ordinal));
+                } else {
+                    // Import by name - thunkData is RVA to IMAGE_IMPORT_BY_NAME
+                    uint32_t nameRVA = static_cast<uint32_t>(thunkData);
+                    uint32_t nameOffset = rvaToFileOffset(nameRVA);
+                    
+                    if (nameOffset != 0) {
+                        // Skip hint (2 bytes) and read function name
+                        std::string functionName = readString(nameOffset + 2);
+                        if (!functionName.empty()) {
+                            entry.functionNames.push_back(functionName);
+                            entry.ordinals.push_back(0); // No ordinal for named imports
+                        }
+                        
+                        // Restore position to continue reading thunk table
+                        file.clear();
+                        file.seekg(thunkPos + static_cast<std::streamoff>(sizeof(uint64_t)), std::ios::beg);
+                    }
+                }
+            }
+        } else {
+            // 32-bit thunks
+            const uint32_t ORDINAL_FLAG_32 = 0x80000000;
+            
+            while (true) {
+                // Save current position in thunk table
+                std::streampos thunkPos = file.tellg();
+                
+                uint32_t thunkData;
+                file.read(reinterpret_cast<char*>(&thunkData), sizeof(thunkData));
+                
+                if (file.fail() || thunkData == 0) {
+                    break;
+                }
+                
+                // Check if import by ordinal
+                if (thunkData & ORDINAL_FLAG_32) {
+                    // Import by ordinal
+                    uint32_t ordinal = thunkData & 0xFFFF;
+                    entry.ordinals.push_back(ordinal);
+                    entry.functionNames.push_back("Ordinal_" + std::to_string(ordinal));
+                } else {
+                    // Import by name - thunkData is RVA to IMAGE_IMPORT_BY_NAME
+                    uint32_t nameOffset = rvaToFileOffset(thunkData);
+                    
+                    if (nameOffset != 0) {
+                        // Skip hint (2 bytes) and read function name
+                        std::string functionName = readString(nameOffset + 2);
+                        if (!functionName.empty()) {
+                            entry.functionNames.push_back(functionName);
+                            entry.ordinals.push_back(0); // No ordinal for named imports
+                        }
+                        
+                        // Restore position to continue reading thunk table
+                        file.clear();
+                        file.seekg(thunkPos + static_cast<std::streamoff>(sizeof(uint32_t)), std::ios::beg);
+                    }
+                }
+            }
+        }
+        
+        // Store import entry if it has functions
+        if (!entry.functionNames.empty()) {
+            imports.push_back(entry);
+        }
+        
+        currentOffset += sizeof(ImportDescriptor);
+    }
 }
 
 void PeParser::parseExports() {
@@ -589,7 +804,32 @@ void PeParser::printSectionHeadersInfo() {
 }
 
 void PeParser::printImportTableInfo() {
-    // To be implemented in task 5
+    std::cout << "\n=== Import Table Information ===" << std::endl;
+    
+    if (imports.empty()) {
+        std::cout << "No imports found." << std::endl;
+        std::cout << "================================" << std::endl;
+        return;
+    }
+    
+    std::cout << "Number of imported DLLs: " << imports.size() << std::endl;
+    
+    // Count total functions
+    size_t totalFunctions = 0;
+    for (const auto& importEntry : imports) {
+        totalFunctions += importEntry.functionNames.size();
+    }
+    std::cout << "Total imported functions: " << totalFunctions << std::endl;
+    
+    std::cout << "\n--- Imported DLLs ---" << std::endl;
+    
+    for (size_t i = 0; i < imports.size(); ++i) {
+        const auto& importEntry = imports[i];
+        std::cout << (i + 1) << ". " << importEntry.dllName 
+                  << " (" << importEntry.functionNames.size() << " functions)" << std::endl;
+    }
+    
+    std::cout << "\n================================" << std::endl;
 }
 
 void PeParser::printBaseRelocationsInfo() {
@@ -597,7 +837,31 @@ void PeParser::printBaseRelocationsInfo() {
 }
 
 void PeParser::printImportFunctions() {
-    // To be implemented in task 5
+    std::cout << "\n=== Imported Functions ===" << std::endl;
+    
+    if (imports.empty()) {
+        std::cout << "No imports found." << std::endl;
+        std::cout << "==========================" << std::endl;
+        return;
+    }
+    
+    // List all imported functions with their DLL names
+    for (const auto& importEntry : imports) {
+        std::cout << "\n--- " << importEntry.dllName << " ---" << std::endl;
+        
+        for (size_t i = 0; i < importEntry.functionNames.size(); ++i) {
+            std::cout << "  ";
+            
+            // Show ordinal if it's an ordinal import
+            if (importEntry.ordinals[i] != 0) {
+                std::cout << "[Ordinal " << importEntry.ordinals[i] << "] ";
+            }
+            
+            std::cout << importEntry.functionNames[i] << std::endl;
+        }
+    }
+    
+    std::cout << "\n==========================" << std::endl;
 }
 
 void PeParser::printExportFunctions() {
@@ -651,8 +915,16 @@ std::vector<std::string> PeParser::getExportFunctionNames() {
 }
 
 std::vector<std::string> PeParser::getImportFunctionNames() {
-    // To be implemented in task 5
-    return std::vector<std::string>();
+    std::vector<std::string> allFunctions;
+    
+    // Collect all function names from all imported DLLs
+    for (const auto& importEntry : imports) {
+        for (const auto& functionName : importEntry.functionNames) {
+            allFunctions.push_back(functionName);
+        }
+    }
+    
+    return allFunctions;
 }
 
 bool PeParser::isExe() {

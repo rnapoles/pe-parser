@@ -46,6 +46,14 @@ struct FileHeader {
     uint16_t characteristics;      // File characteristics
 };
 
+#pragma pack(push, 1)
+
+// Data Directory structure
+struct DataDirectory {
+    uint32_t virtualAddress;  // RVA of the data
+    uint32_t size;            // Size of the data
+};
+
 // Optional Header for 32-bit PE
 struct OptionalHeader32 {
     uint16_t magic;                    // Magic number
@@ -100,7 +108,7 @@ struct OptionalHeader64 {
     uint16_t majorSubsystemVersion;
     uint16_t minorSubsystemVersion;
     uint32_t win32VersionValue;
-    uint64_t sizeOfImage;              // Size of image
+    uint32_t sizeOfImage;              // Size of image
     uint32_t sizeOfHeaders;            // Size of headers
     uint32_t checkSum;                 // Checksum
     uint16_t subsystem;                // Subsystem
@@ -119,6 +127,7 @@ struct NTHeaders {
     FileHeader fileHeader;
     OptionalHeader32 optionalHeader32;
     OptionalHeader64 optionalHeader64;
+    DataDirectory dataDirectories[16];  // Data directories (separate from optional header)
     bool is64Bit;
 };
 
@@ -135,6 +144,8 @@ struct SectionHeader {
     uint16_t numberOfLinenumbers;  // Number of line numbers
     uint32_t characteristics;      // Section characteristics
 };
+
+#pragma pack(pop)
 
 // Import Entry structure
 struct ImportEntry {
@@ -170,6 +181,8 @@ private:
     template<typename T> T readData(size_t offset);
     std::string readString(size_t offset, size_t maxLength = 256);
     bool validatePESignature();
+    uint32_t rvaToFileOffset(uint32_t rva);
+    std::string readStringAtRVA(uint32_t rva, size_t maxLength = 256);
     
 public:
     // Constructor/Destructor

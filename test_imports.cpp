@@ -1,10 +1,11 @@
 #include "PeParser.h"
 #include <iostream>
 
-int main() {
+int main(int argc, char* argv[]) {
     try {
-        // Test with the existing test executable
-        PeParser parser("test_nt_headers.exe");
+        // Test with the specified file or default to test_nt_headers.exe
+        const char* filename = (argc > 1) ? argv[1] : "test_nt_headers.exe";
+        PeParser parser(filename);
         
         std::cout << "Testing Import Table Parsing..." << std::endl;
         
