@@ -83,28 +83,40 @@
     - Create printImportFunctions() method listing all imported functions with DLL names
     - _Requirements: 4.3, 6.6, 6.8_
 
-- [ ] 6. Implement export table parsing functionality
-  - [ ] 6.1 Create parseExports() method
+- [x] 6. Implement export table parsing functionality
+
+  - [x] 6.1 Create parseExports() method
+
     - Locate export table using data directory from optional header
     - Parse export directory to get function names and ordinals
     - Handle both named exports and ordinal-only exports
     - Store export information in exports vector
     - _Requirements: 4.2, 4.5, 1.1_
 
-  - [ ] 6.2 Implement export information access methods
+  - [x] 6.2 Implement export information access methods
+
     - Create getExportFunctionNames() method returning vector of function names
     - Create printExportFunctions() method listing all exported functions with ordinals
     - _Requirements: 4.4, 6.9_
 
-- [ ] 7. Implement Rich header parsing functionality
-  - [ ] 7.1 Create parseRichHeader() method
+- [x] 7. Implement Rich header parsing functionality
+
+
+
+
+
+
+  - [x] 7.1 Create parseRichHeader() method
+
     - Search for Rich header signature between DOS header and NT headers
     - Parse compiler metadata if Rich header is present
     - Handle cases where Rich header is absent
     - Store Rich header data in richHeader member
     - _Requirements: 2.2, 1.1_
 
-  - [ ] 7.2 Implement printRichHeaderInfo() display method
+  - [x] 7.2 Implement printRichHeaderInfo() display method
+
+
     - Display compiler information and build metadata
     - Show Rich header presence/absence status
     - Format compiler version and tool information

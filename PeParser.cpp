@@ -144,7 +144,115 @@ void PeParser::parseDOSHeader() {
 }
 
 void PeParser::parseRichHeader() {
-    // To be implemented in task 7
+    // Initialize Rich header as not present
+    richHeader.present = false;
+    richHeader.data.clear();
+    
+    // Rich header is located between DOS header (64 bytes) and NT headers (at e_lfanew)
+    // Search for "Rich" signature (0x68636952 in little-endian)
+    const uint32_t RICH_SIGNATURE = 0x68636952; // "Rich" in little-endian
+    
+    // Start searching after DOS header (64 bytes) and before NT headers
+    size_t searchStart = 64;
+    size_t searchEnd = dosHeader.e_lfanew;
+    
+    // Validate search range
+    if (searchEnd <= searchStart || searchEnd - searchStart > 0x10000) {
+        // No space for Rich header or unreasonable range
+        return;
+    }
+    
+    // Search for Rich signature
+    file.clear();
+    file.seekg(searchStart, std::ios::beg);
+    
+    uint32_t signature;
+    size_t richOffset = 0;
+    bool found = false;
+    
+    for (size_t offset = searchStart; offset < searchEnd - 4; offset += 4) {
+        file.seekg(offset, std::ios::beg);
+        file.read(reinterpret_cast<char*>(&signature), sizeof(signature));
+        
+        if (file.fail()) {
+            break;
+        }
+        
+        if (signature == RICH_SIGNATURE) {
+            richOffset = offset;
+            found = true;
+            break;
+        }
+    }
+    
+    if (!found) {
+        // Rich header not present (this is normal for some PE files)
+        return;
+    }
+    
+    // Read the XOR key (4 bytes after "Rich" signature)
+    file.seekg(richOffset + 4, std::ios::beg);
+    uint32_t xorKey;
+    file.read(reinterpret_cast<char*>(&xorKey), sizeof(xorKey));
+    
+    if (file.fail()) {
+        return;
+    }
+    
+    // Find the start of Rich header by searching backwards for "DanS" XORed with the key
+    // "DanS" = 0x536E6144 in little-endian
+    const uint32_t DANS_SIGNATURE = 0x536E6144;
+    uint32_t xoredDanS = DANS_SIGNATURE ^ xorKey;
+    
+    size_t dansOffset = 0;
+    bool dansFound = false;
+    
+    // Search backwards from Rich signature
+    for (size_t offset = richOffset; offset >= searchStart + 4; offset -= 4) {
+        file.seekg(offset - 4, std::ios::beg);
+        file.read(reinterpret_cast<char*>(&signature), sizeof(signature));
+        
+        if (file.fail()) {
+            break;
+        }
+        
+        if (signature == xoredDanS) {
+            dansOffset = offset - 4;
+            dansFound = true;
+            break;
+        }
+        
+        // Safety check: don't search too far back
+        if (richOffset - offset > 0x1000) {
+            break;
+        }
+    }
+    
+    if (!dansFound) {
+        // Could not find start of Rich header
+        return;
+    }
+    
+    // Calculate Rich header size (from DanS to end of XOR key after Rich)
+    size_t richHeaderSize = (richOffset + 8) - dansOffset;
+    
+    // Validate size is reasonable
+    if (richHeaderSize < 16 || richHeaderSize > 0x1000) {
+        return;
+    }
+    
+    // Read the entire Rich header data
+    richHeader.data.resize(richHeaderSize);
+    file.seekg(dansOffset, std::ios::beg);
+    file.read(reinterpret_cast<char*>(richHeader.data.data()), richHeaderSize);
+    
+    if (file.fail()) {
+        richHeader.data.clear();
+        return;
+    }
+    
+    // Mark Rich header as present
+    richHeader.present = true;
 }
 
 void PeParser::parseNTHeaders() {
@@ -611,7 +719,147 @@ void PeParser::parseDelayImports(const DataDirectory& delayImportDir) {
 }
 
 void PeParser::parseExports() {
-    // To be implemented in task 6
+    // Clear any existing exports
+    exports.clear();
+    
+    // Get export table data directory (index 0)
+    const uint32_t EXPORT_TABLE_INDEX = 0;
+    
+    uint32_t numberOfRvaAndSizes = ntHeaders.is64Bit ? 
+        ntHeaders.optionalHeader64.numberOfRvaAndSizes : 
+        ntHeaders.optionalHeader32.numberOfRvaAndSizes;
+    
+    // Check if export table exists
+    if (numberOfRvaAndSizes <= EXPORT_TABLE_INDEX) {
+        return; // No export table
+    }
+    
+    DataDirectory exportDir = ntHeaders.dataDirectories[EXPORT_TABLE_INDEX];
+    
+    if (exportDir.virtualAddress == 0 || exportDir.size == 0) {
+        return; // No exports
+    }
+    
+    // Convert RVA to file offset
+    uint32_t exportTableOffset = rvaToFileOffset(exportDir.virtualAddress);
+    if (exportTableOffset == 0) {
+        return; // Invalid RVA
+    }
+    
+    // Export directory structure (40 bytes)
+    struct ExportDirectory {
+        uint32_t characteristics;       // Reserved, must be 0
+        uint32_t timeDateStamp;        // Time/date stamp
+        uint16_t majorVersion;         // Major version
+        uint16_t minorVersion;         // Minor version
+        uint32_t nameRVA;              // RVA to DLL name
+        uint32_t base;                 // Starting ordinal number
+        uint32_t numberOfFunctions;    // Number of entries in EAT
+        uint32_t numberOfNames;        // Number of entries in name pointer table
+        uint32_t addressOfFunctions;   // RVA to Export Address Table (EAT)
+        uint32_t addressOfNames;       // RVA to Export Name Pointer Table
+        uint32_t addressOfNameOrdinals; // RVA to Export Ordinal Table
+    };
+    
+    // Read export directory
+    file.clear();
+    file.seekg(exportTableOffset, std::ios::beg);
+    
+    ExportDirectory exportDirectory;
+    file.read(reinterpret_cast<char*>(&exportDirectory), sizeof(ExportDirectory));
+    
+    if (file.fail()) {
+        return; // Failed to read export directory
+    }
+    
+    // Validate export directory
+    if (exportDirectory.numberOfFunctions == 0) {
+        return; // No functions to export
+    }
+    
+    // Convert RVAs to file offsets
+    uint32_t functionsOffset = rvaToFileOffset(exportDirectory.addressOfFunctions);
+    uint32_t namesOffset = rvaToFileOffset(exportDirectory.addressOfNames);
+    uint32_t ordinalsOffset = rvaToFileOffset(exportDirectory.addressOfNameOrdinals);
+    
+    if (functionsOffset == 0) {
+        return; // Invalid function table RVA
+    }
+    
+    // Read Export Address Table (array of function RVAs)
+    std::vector<uint32_t> functionRVAs(exportDirectory.numberOfFunctions);
+    file.clear();
+    file.seekg(functionsOffset, std::ios::beg);
+    file.read(reinterpret_cast<char*>(functionRVAs.data()), 
+             exportDirectory.numberOfFunctions * sizeof(uint32_t));
+    
+    if (file.fail()) {
+        return; // Failed to read function table
+    }
+    
+    // Read Export Name Pointer Table (array of name RVAs) if present
+    std::vector<uint32_t> nameRVAs;
+    if (exportDirectory.numberOfNames > 0 && namesOffset != 0) {
+        nameRVAs.resize(exportDirectory.numberOfNames);
+        file.clear();
+        file.seekg(namesOffset, std::ios::beg);
+        file.read(reinterpret_cast<char*>(nameRVAs.data()), 
+                 exportDirectory.numberOfNames * sizeof(uint32_t));
+        
+        if (file.fail()) {
+            nameRVAs.clear(); // Failed to read name table
+        }
+    }
+    
+    // Read Export Ordinal Table (array of ordinal indices) if present
+    std::vector<uint16_t> ordinalIndices;
+    if (exportDirectory.numberOfNames > 0 && ordinalsOffset != 0) {
+        ordinalIndices.resize(exportDirectory.numberOfNames);
+        file.clear();
+        file.seekg(ordinalsOffset, std::ios::beg);
+        file.read(reinterpret_cast<char*>(ordinalIndices.data()), 
+                 exportDirectory.numberOfNames * sizeof(uint16_t));
+        
+        if (file.fail()) {
+            ordinalIndices.clear(); // Failed to read ordinal table
+        }
+    }
+    
+    // Create a map from function index to name
+    std::vector<std::string> functionNames(exportDirectory.numberOfFunctions);
+    
+    // Process named exports
+    for (uint32_t i = 0; i < exportDirectory.numberOfNames && i < nameRVAs.size() && i < ordinalIndices.size(); ++i) {
+        // Read function name
+        std::string functionName = readStringAtRVA(nameRVAs[i]);
+        
+        if (!functionName.empty() && ordinalIndices[i] < exportDirectory.numberOfFunctions) {
+            // Map name to function index
+            functionNames[ordinalIndices[i]] = functionName;
+        }
+    }
+    
+    // Create export entries for all functions
+    for (uint32_t i = 0; i < exportDirectory.numberOfFunctions; ++i) {
+        // Skip null entries (unused export slots)
+        if (functionRVAs[i] == 0) {
+            continue;
+        }
+        
+        ExportEntry entry;
+        entry.rva = functionRVAs[i];
+        entry.ordinal = exportDirectory.base + i;
+        
+        // Use name if available, otherwise create ordinal-only name
+        if (!functionNames[i].empty()) {
+            entry.functionName = functionNames[i];
+        } else {
+            // Ordinal-only export
+            entry.functionName = "Ordinal_" + std::to_string(entry.ordinal);
+        }
+        
+        exports.push_back(entry);
+    }
 }
 
 // Placeholder implementations for information methods
@@ -656,7 +904,103 @@ void PeParser::printDOSHeaderInfo() {
 }
 
 void PeParser::printRichHeaderInfo() {
-    // To be implemented in task 7
+    std::cout << "\n=== Rich Header Information ===" << std::endl;
+    
+    // Check if Rich header is present
+    if (!richHeader.present) {
+        std::cout << "Rich Header: Not present" << std::endl;
+        std::cout << "================================" << std::endl;
+        return;
+    }
+    
+    std::cout << "Rich Header: Present" << std::endl;
+    std::cout << "Rich Header Size: " << richHeader.data.size() << " bytes" << std::endl;
+    
+    // Parse Rich header structure to extract compiler metadata
+    // Rich header format:
+    // - "DanS" signature (4 bytes) XORed with key
+    // - Padding (12 bytes) XORed with key
+    // - Compiler entries (8 bytes each) XORed with key
+    // - "Rich" signature (4 bytes) - not XORed
+    // - XOR key (4 bytes) - not XORed
+    
+    if (richHeader.data.size() < 16) {
+        std::cout << "Rich Header data too small to parse" << std::endl;
+        std::cout << "================================" << std::endl;
+        return;
+    }
+    
+    // Extract XOR key from the end of Rich header (last 4 bytes)
+    uint32_t xorKey;
+    std::memcpy(&xorKey, &richHeader.data[richHeader.data.size() - 4], sizeof(xorKey));
+    
+    std::cout << "XOR Key: 0x" << std::hex << xorKey << std::dec << std::endl;
+    
+    // Parse compiler entries
+    // Skip first 16 bytes (DanS signature + padding)
+    // Stop 8 bytes before end (Rich signature + XOR key)
+    std::cout << "\n--- Compiler Metadata ---" << std::endl;
+    
+    size_t entryStart = 16;
+    size_t entryEnd = richHeader.data.size() - 8;
+    
+    if (entryEnd <= entryStart) {
+        std::cout << "No compiler entries found" << std::endl;
+        std::cout << "================================" << std::endl;
+        return;
+    }
+    
+    std::cout << "Product ID    Build Number  Count" << std::endl;
+    std::cout << "----------    ------------  -----" << std::endl;
+    
+    bool hasEntries = false;
+    
+    for (size_t offset = entryStart; offset < entryEnd; offset += 8) {
+        // Each entry is 8 bytes: 4 bytes product/build info + 4 bytes count
+        uint32_t productInfo, count;
+        
+        std::memcpy(&productInfo, &richHeader.data[offset], sizeof(productInfo));
+        std::memcpy(&count, &richHeader.data[offset + 4], sizeof(count));
+        
+        // Decrypt by XORing with key
+        productInfo ^= xorKey;
+        count ^= xorKey;
+        
+        // Skip zero entries
+        if (productInfo == 0 && count == 0) {
+            continue;
+        }
+        
+        // Extract product ID and build number
+        // Product info format: high 16 bits = product ID, low 16 bits = build number
+        uint16_t productId = (productInfo >> 16) & 0xFFFF;
+        uint16_t buildNumber = productInfo & 0xFFFF;
+        
+        std::cout << "0x" << std::hex << std::setfill('0');
+        std::cout.width(8);
+        std::cout << productId << "    ";
+        
+        std::cout << std::dec << std::setfill(' ');
+        std::cout.width(12);
+        std::cout << buildNumber << "  ";
+        
+        std::cout.width(5);
+        std::cout << count << std::endl;
+        
+        hasEntries = true;
+    }
+    
+    if (!hasEntries) {
+        std::cout << "No valid compiler entries found" << std::endl;
+    }
+    
+    // Display compiler version information
+    std::cout << "\n--- Compiler Tool Information ---" << std::endl;
+    std::cout << "The Rich header contains metadata about the Microsoft" << std::endl;
+    std::cout << "compiler and linker tools used to build this PE file." << std::endl;
+    std::cout << "Product IDs identify specific compiler versions and tools." << std::endl;
+    
+    std::cout << "\n================================" << std::endl;
 }
 
 void PeParser::printNTHeadersInfo() {
@@ -1037,7 +1381,35 @@ void PeParser::printImportFunctions() {
 }
 
 void PeParser::printExportFunctions() {
-    // To be implemented in task 6
+    std::cout << "\n=== Exported Functions ===" << std::endl;
+    
+    if (exports.empty()) {
+        std::cout << "No exports found." << std::endl;
+        std::cout << "==========================" << std::endl;
+        return;
+    }
+    
+    std::cout << "Number of exported functions: " << exports.size() << std::endl;
+    std::cout << "\n";
+    
+    // Display table header
+    std::cout << "Ordinal    RVA         Function Name" << std::endl;
+    std::cout << "-------    ----------  -------------" << std::endl;
+    
+    // List all exported functions with ordinals
+    for (const auto& exportEntry : exports) {
+        std::cout << std::dec << std::setfill(' ');
+        std::cout.width(7);
+        std::cout << std::left << exportEntry.ordinal << "    ";
+        
+        std::cout << "0x" << std::hex << std::setfill('0');
+        std::cout.width(8);
+        std::cout << std::right << exportEntry.rva << "  ";
+        
+        std::cout << std::dec << exportEntry.functionName << std::endl;
+    }
+    
+    std::cout << "\n==========================" << std::endl;
 }
 
 // Placeholder implementations for query methods
@@ -1082,8 +1454,14 @@ std::string PeParser::getTargetOS() {
 }
 
 std::vector<std::string> PeParser::getExportFunctionNames() {
-    // To be implemented in task 6
-    return std::vector<std::string>();
+    std::vector<std::string> functionNames;
+    
+    // Collect all function names from exports
+    for (const auto& exportEntry : exports) {
+        functionNames.push_back(exportEntry.functionName);
+    }
+    
+    return functionNames;
 }
 
 std::vector<std::string> PeParser::getImportFunctionNames() {
