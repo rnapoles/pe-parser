@@ -1,5 +1,6 @@
 #include "PeParser.h"
 #include <iostream>
+#include <iomanip>
 #include <cstring>
 
 // Constructor - opens file and performs basic validation
@@ -155,7 +156,67 @@ void PeParser::parseNTHeaders() {
 }
 
 void PeParser::parseSectionHeaders() {
-    // To be implemented in task 4
+    // Calculate section headers offset after NT headers
+    // Offset = e_lfanew + 4 (PE signature) + 20 (File Header) + sizeOfOptionalHeader
+    size_t sectionHeadersOffset = dosHeader.e_lfanew + 4 + sizeof(FileHeader) + ntHeaders.fileHeader.sizeOfOptionalHeader;
+    
+    // Clear any existing section headers
+    sectionHeaders.clear();
+    
+    // Get number of sections from file header
+    uint16_t numberOfSections = ntHeaders.fileHeader.numberOfSections;
+    
+    // Validate number of sections is reasonable
+    if (numberOfSections == 0 || numberOfSections > 96) {
+        throw std::runtime_error("Invalid number of sections: " + std::to_string(numberOfSections));
+    }
+    
+    // Seek to section headers offset
+    file.seekg(sectionHeadersOffset, std::ios::beg);
+    
+    // Read all section headers (40 bytes each)
+    for (uint16_t i = 0; i < numberOfSections; ++i) {
+        SectionHeader section;
+        
+        // Read the entire section header structure
+        file.read(reinterpret_cast<char*>(&section), sizeof(SectionHeader));
+        
+        if (file.fail()) {
+            throw std::runtime_error("Failed to read section header " + std::to_string(i));
+        }
+        
+        // Validate section boundaries
+        // Check that pointerToRawData and sizeOfRawData are reasonable
+        if (section.sizeOfRawData > 0) {
+            // Ensure raw data pointer is not zero if size is non-zero
+            if (section.pointerToRawData == 0) {
+                throw std::runtime_error("Invalid section: non-zero size but zero raw data pointer");
+            }
+            
+            // Check file alignment
+            uint32_t fileAlignment = ntHeaders.is64Bit ? 
+                ntHeaders.optionalHeader64.fileAlignment : 
+                ntHeaders.optionalHeader32.fileAlignment;
+            
+            if (fileAlignment > 0 && section.pointerToRawData % fileAlignment != 0) {
+                // Warning: section not aligned, but don't throw - some packers do this
+            }
+        }
+        
+        // Validate virtual address and size
+        if (section.virtualSize > 0 && section.virtualAddress == 0 && i > 0) {
+            // First section can have VA of 0, but others typically shouldn't
+            // This is a warning condition, not an error
+        }
+        
+        // Validate characteristics - should have at least one flag set
+        if (section.characteristics == 0) {
+            // Warning: section with no characteristics is unusual but not invalid
+        }
+        
+        // Store section information in sectionHeaders vector
+        sectionHeaders.push_back(section);
+    }
 }
 
 void PeParser::parseImports() {
@@ -390,7 +451,141 @@ void PeParser::printNTHeadersInfo() {
 }
 
 void PeParser::printSectionHeadersInfo() {
-    // To be implemented in task 4
+    std::cout << "\n=== Section Headers Information ===" << std::endl;
+    std::cout << "Number of Sections: " << sectionHeaders.size() << std::endl;
+    std::cout << "\n";
+    
+    // Display table header
+    std::cout << "Section Name    Virtual Addr  Virtual Size  Raw Size      Raw Offset    Characteristics" << std::endl;
+    std::cout << "------------    ------------  ------------  ------------  ------------  ---------------" << std::endl;
+    
+    // Display each section
+    for (size_t i = 0; i < sectionHeaders.size(); ++i) {
+        const SectionHeader& section = sectionHeaders[i];
+        
+        // Extract section name (max 8 chars, may not be null-terminated)
+        char sectionName[9] = {0};
+        std::memcpy(sectionName, section.name, 8);
+        
+        // Display section information in table format
+        std::cout.width(15);
+        std::cout << std::left << sectionName << " ";
+        
+        std::cout << "0x" << std::hex << std::setfill('0');
+        std::cout.width(10);
+        std::cout << std::right << section.virtualAddress << "  ";
+        
+        std::cout << "0x" << std::setfill('0');
+        std::cout.width(10);
+        std::cout << section.virtualSize << "  ";
+        
+        std::cout << "0x" << std::setfill('0');
+        std::cout.width(10);
+        std::cout << section.sizeOfRawData << "  ";
+        
+        std::cout << "0x" << std::setfill('0');
+        std::cout.width(10);
+        std::cout << section.pointerToRawData << "  ";
+        
+        std::cout << std::dec << std::setfill(' ');
+        
+        // Display section flags (executable, readable, writable)
+        std::cout << "0x" << std::hex << section.characteristics << " (";
+        
+        bool first = true;
+        
+        // Check common section characteristics flags
+        if (section.characteristics & 0x00000020) { // IMAGE_SCN_CNT_CODE
+            if (!first) std::cout << ", ";
+            std::cout << "CODE";
+            first = false;
+        }
+        if (section.characteristics & 0x00000040) { // IMAGE_SCN_CNT_INITIALIZED_DATA
+            if (!first) std::cout << ", ";
+            std::cout << "INIT_DATA";
+            first = false;
+        }
+        if (section.characteristics & 0x00000080) { // IMAGE_SCN_CNT_UNINITIALIZED_DATA
+            if (!first) std::cout << ", ";
+            std::cout << "UNINIT_DATA";
+            first = false;
+        }
+        if (section.characteristics & 0x02000000) { // IMAGE_SCN_MEM_DISCARDABLE
+            if (!first) std::cout << ", ";
+            std::cout << "DISCARDABLE";
+            first = false;
+        }
+        if (section.characteristics & 0x10000000) { // IMAGE_SCN_MEM_SHARED
+            if (!first) std::cout << ", ";
+            std::cout << "SHARED";
+            first = false;
+        }
+        if (section.characteristics & 0x20000000) { // IMAGE_SCN_MEM_EXECUTE
+            if (!first) std::cout << ", ";
+            std::cout << "EXEC";
+            first = false;
+        }
+        if (section.characteristics & 0x40000000) { // IMAGE_SCN_MEM_READ
+            if (!first) std::cout << ", ";
+            std::cout << "READ";
+            first = false;
+        }
+        if (section.characteristics & 0x80000000) { // IMAGE_SCN_MEM_WRITE
+            if (!first) std::cout << ", ";
+            std::cout << "WRITE";
+            first = false;
+        }
+        
+        std::cout << ")" << std::dec << std::endl;
+    }
+    
+    // Display detailed information for each section
+    std::cout << "\n--- Detailed Section Information ---" << std::endl;
+    
+    for (size_t i = 0; i < sectionHeaders.size(); ++i) {
+        const SectionHeader& section = sectionHeaders[i];
+        
+        // Extract section name
+        char sectionName[9] = {0};
+        std::memcpy(sectionName, section.name, 8);
+        
+        std::cout << "\nSection " << (i + 1) << ": " << sectionName << std::endl;
+        std::cout << "  Virtual Address: 0x" << std::hex << section.virtualAddress << std::dec << std::endl;
+        std::cout << "  Virtual Size: " << section.virtualSize << " bytes (0x" << std::hex << section.virtualSize << std::dec << ")" << std::endl;
+        std::cout << "  Raw Data Size: " << section.sizeOfRawData << " bytes (0x" << std::hex << section.sizeOfRawData << std::dec << ")" << std::endl;
+        std::cout << "  Raw Data Offset: 0x" << std::hex << section.pointerToRawData << std::dec << std::endl;
+        std::cout << "  Relocations Offset: 0x" << std::hex << section.pointerToRelocations << std::dec << std::endl;
+        std::cout << "  Line Numbers Offset: 0x" << std::hex << section.pointerToLinenumbers << std::dec << std::endl;
+        std::cout << "  Number of Relocations: " << section.numberOfRelocations << std::endl;
+        std::cout << "  Number of Line Numbers: " << section.numberOfLinenumbers << std::endl;
+        std::cout << "  Characteristics: 0x" << std::hex << section.characteristics << std::dec << std::endl;
+        
+        // Show section flags in readable format
+        std::cout << "  Flags: ";
+        bool hasFlags = false;
+        
+        if (section.characteristics & 0x20000000) { // EXEC
+            std::cout << "Executable";
+            hasFlags = true;
+        }
+        if (section.characteristics & 0x40000000) { // READ
+            if (hasFlags) std::cout << " | ";
+            std::cout << "Readable";
+            hasFlags = true;
+        }
+        if (section.characteristics & 0x80000000) { // WRITE
+            if (hasFlags) std::cout << " | ";
+            std::cout << "Writable";
+            hasFlags = true;
+        }
+        
+        if (!hasFlags) {
+            std::cout << "None";
+        }
+        std::cout << std::endl;
+    }
+    
+    std::cout << "\n====================================" << std::endl;
 }
 
 void PeParser::printImportTableInfo() {

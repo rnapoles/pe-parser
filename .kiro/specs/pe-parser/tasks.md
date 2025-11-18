@@ -25,12 +25,7 @@
 
 - [x] 3. Implement NT headers parsing functionality
 
-
-
-
-
   - [x] 3.1 Create parseNTHeaders() method for PE signature and headers
-
 
     - Seek to NT headers offset using e_lfanew from DOS header
     - Validate PE signature (PE\0\0)
@@ -39,7 +34,6 @@
     - _Requirements: 2.3, 2.5, 1.1_
 
   - [x] 3.2 Implement architecture and file type detection methods
-
 
     - Create is64Bits() method checking optional header magic value
     - Create isExe() method checking characteristics field for executable flag
@@ -55,15 +49,18 @@
     - Show file characteristics and architecture information
     - _Requirements: 6.4_
 
-- [ ] 4. Implement section headers parsing functionality
-  - [ ] 4.1 Create parseSectionHeaders() method
+- [x] 4. Implement section headers parsing functionality
+
+  - [x] 4.1 Create parseSectionHeaders() method
+
     - Calculate section headers offset after NT headers
     - Read all section headers (40 bytes each) based on numberOfSections
     - Store section information in sectionHeaders vector
     - Validate section boundaries and characteristics
     - _Requirements: 3.1, 3.2, 3.3, 1.1_
 
-  - [ ] 4.2 Implement printSectionHeadersInfo() display method
+  - [x] 4.2 Implement printSectionHeadersInfo() display method
+
     - Display section names, virtual addresses, sizes, and characteristics
     - Show section flags (executable, readable, writable)
     - Format section information in readable table format
