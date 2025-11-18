@@ -268,17 +268,32 @@ void PeParser::parseImports() {
     
     // Get import table data directory (index 1)
     const uint32_t IMPORT_TABLE_INDEX = 1;
+    const uint32_t DELAY_IMPORT_TABLE_INDEX = 13;
     
     uint32_t numberOfRvaAndSizes = ntHeaders.is64Bit ? 
         ntHeaders.optionalHeader64.numberOfRvaAndSizes : 
         ntHeaders.optionalHeader32.numberOfRvaAndSizes;
     
-    if (numberOfRvaAndSizes <= IMPORT_TABLE_INDEX) {
-        return; // No import table
+    // Parse regular imports first
+    if (numberOfRvaAndSizes > IMPORT_TABLE_INDEX) {
+        DataDirectory importDir = ntHeaders.dataDirectories[IMPORT_TABLE_INDEX];
+        
+        if (importDir.virtualAddress != 0 && importDir.size != 0) {
+            parseRegularImports(importDir);
+        }
     }
     
-    DataDirectory importDir = ntHeaders.dataDirectories[IMPORT_TABLE_INDEX];
-    
+    // Parse delay-load imports
+    if (numberOfRvaAndSizes > DELAY_IMPORT_TABLE_INDEX) {
+        DataDirectory delayImportDir = ntHeaders.dataDirectories[DELAY_IMPORT_TABLE_INDEX];
+        
+        if (delayImportDir.virtualAddress != 0 && delayImportDir.size != 0) {
+            parseDelayImports(delayImportDir);
+        }
+    }
+}
+
+void PeParser::parseRegularImports(const DataDirectory& importDir) {
     // Check if import table exists
     if (importDir.virtualAddress == 0 || importDir.size == 0) {
         return; // No imports
@@ -435,6 +450,163 @@ void PeParser::parseImports() {
         }
         
         currentOffset += sizeof(ImportDescriptor);
+    }
+}
+
+void PeParser::parseDelayImports(const DataDirectory& delayImportDir) {
+    // Convert RVA to file offset
+    uint32_t delayImportTableOffset = rvaToFileOffset(delayImportDir.virtualAddress);
+    if (delayImportTableOffset == 0) {
+        return; // Invalid RVA
+    }
+    
+    // Delay-load import descriptor structure (32 bytes)
+    struct DelayImportDescriptor {
+        uint32_t attributes;           // Must be 0
+        uint32_t dllNameRVA;          // RVA to DLL name
+        uint32_t moduleHandleRVA;     // RVA to module handle
+        uint32_t delayIATRVA;         // RVA to delay-load IAT
+        uint32_t delayINTRVA;         // RVA to delay-load INT (name table)
+        uint32_t boundDelayIATRVA;    // RVA to bound delay-load IAT
+        uint32_t unloadDelayIATRVA;   // RVA to unload delay-load IAT
+        uint32_t timeStamp;           // Timestamp
+    };
+    
+    // Read delay-load import descriptors until we hit a null descriptor
+    uint32_t currentOffset = delayImportTableOffset;
+    
+    while (true) {
+        // Clear any error flags before seeking
+        file.clear();
+        file.seekg(currentOffset, std::ios::beg);
+        
+        DelayImportDescriptor descriptor;
+        file.read(reinterpret_cast<char*>(&descriptor), sizeof(DelayImportDescriptor));
+        
+        if (file.fail()) {
+            break;
+        }
+        
+        // Check for null descriptor (end of delay-load import table)
+        if (descriptor.dllNameRVA == 0) {
+            break;
+        }
+        
+        // Read DLL name
+        std::string dllName = readStringAtRVA(descriptor.dllNameRVA);
+        if (dllName.empty()) {
+            currentOffset += sizeof(DelayImportDescriptor);
+            continue;
+        }
+        
+        ImportEntry entry;
+        entry.dllName = dllName + " (delay-load)";
+        
+        // Use delay-load INT if available
+        uint32_t thunkRVA = descriptor.delayINTRVA;
+        
+        if (thunkRVA == 0) {
+            currentOffset += sizeof(DelayImportDescriptor);
+            continue;
+        }
+        
+        uint32_t thunkOffset = rvaToFileOffset(thunkRVA);
+        if (thunkOffset == 0) {
+            currentOffset += sizeof(DelayImportDescriptor);
+            continue;
+        }
+        
+        // Read delay-load import name table entries
+        file.clear();  // Clear any error flags
+        file.seekg(thunkOffset, std::ios::beg);
+        
+        if (ntHeaders.is64Bit) {
+            // 64-bit thunks
+            const uint64_t ORDINAL_FLAG_64 = 0x8000000000000000ULL;
+            
+            while (true) {
+                // Save current position in thunk table
+                std::streampos thunkPos = file.tellg();
+                
+                uint64_t thunkData;
+                file.read(reinterpret_cast<char*>(&thunkData), sizeof(thunkData));
+                
+                if (file.fail() || thunkData == 0) {
+                    break;
+                }
+                
+                // Check if import by ordinal
+                if (thunkData & ORDINAL_FLAG_64) {
+                    // Import by ordinal
+                    uint32_t ordinal = static_cast<uint32_t>(thunkData & 0xFFFF);
+                    entry.ordinals.push_back(ordinal);
+                    entry.functionNames.push_back("Ordinal_" + std::to_string(ordinal));
+                } else {
+                    // Import by name - thunkData is RVA to IMAGE_IMPORT_BY_NAME
+                    uint32_t nameRVA = static_cast<uint32_t>(thunkData);
+                    uint32_t nameOffset = rvaToFileOffset(nameRVA);
+                    
+                    if (nameOffset != 0) {
+                        // Skip hint (2 bytes) and read function name
+                        std::string functionName = readString(nameOffset + 2);
+                        if (!functionName.empty()) {
+                            entry.functionNames.push_back(functionName);
+                            entry.ordinals.push_back(0); // No ordinal for named imports
+                        }
+                        
+                        // Restore position to continue reading thunk table
+                        file.clear();
+                        file.seekg(thunkPos + static_cast<std::streamoff>(sizeof(uint64_t)), std::ios::beg);
+                    }
+                }
+            }
+        } else {
+            // 32-bit thunks
+            const uint32_t ORDINAL_FLAG_32 = 0x80000000;
+            
+            while (true) {
+                // Save current position in thunk table
+                std::streampos thunkPos = file.tellg();
+                
+                uint32_t thunkData;
+                file.read(reinterpret_cast<char*>(&thunkData), sizeof(thunkData));
+                
+                if (file.fail() || thunkData == 0) {
+                    break;
+                }
+                
+                // Check if import by ordinal
+                if (thunkData & ORDINAL_FLAG_32) {
+                    // Import by ordinal
+                    uint32_t ordinal = thunkData & 0xFFFF;
+                    entry.ordinals.push_back(ordinal);
+                    entry.functionNames.push_back("Ordinal_" + std::to_string(ordinal));
+                } else {
+                    // Import by name - thunkData is RVA to IMAGE_IMPORT_BY_NAME
+                    uint32_t nameOffset = rvaToFileOffset(thunkData);
+                    
+                    if (nameOffset != 0) {
+                        // Skip hint (2 bytes) and read function name
+                        std::string functionName = readString(nameOffset + 2);
+                        if (!functionName.empty()) {
+                            entry.functionNames.push_back(functionName);
+                            entry.ordinals.push_back(0); // No ordinal for named imports
+                        }
+                        
+                        // Restore position to continue reading thunk table
+                        file.clear();
+                        file.seekg(thunkPos + static_cast<std::streamoff>(sizeof(uint32_t)), std::ios::beg);
+                    }
+                }
+            }
+        }
+        
+        // Store import entry if it has functions
+        if (!entry.functionNames.empty()) {
+            imports.push_back(entry);
+        }
+        
+        currentOffset += sizeof(DelayImportDescriptor);
     }
 }
 

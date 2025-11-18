@@ -183,6 +183,8 @@ private:
     bool validatePESignature();
     uint32_t rvaToFileOffset(uint32_t rva);
     std::string readStringAtRVA(uint32_t rva, size_t maxLength = 256);
+    void parseRegularImports(const DataDirectory& importDir);
+    void parseDelayImports(const DataDirectory& delayImportDir);
     
 public:
     // Constructor/Destructor
