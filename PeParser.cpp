@@ -120,9 +120,59 @@ std::string PeParser::readStringAtRVA(uint32_t rva, size_t maxLength) {
     return readString(fileOffset, maxLength);
 }
 
-// Placeholder implementations for parsing methods
+// Master parsing method - orchestrates all parsing operations
 void PeParser::parseFile() {
-    // To be implemented in later tasks
+    try {
+        // Parse DOS header first (required for all PE files)
+        parseDOSHeader();
+        
+        // Parse Rich header (optional, may not be present)
+        try {
+            parseRichHeader();
+        } catch (const std::exception& e) {
+            // Rich header parsing failure is not critical
+            std::cerr << "Warning: Rich header parsing failed: " << e.what() << std::endl;
+        }
+        
+        // Parse NT headers (required)
+        parseNTHeaders();
+        
+        // Parse section headers (required)
+        parseSectionHeaders();
+        
+        // Parse imports (optional, may not be present)
+        try {
+            parseImports();
+        } catch (const std::exception& e) {
+            // Import parsing failure is not critical
+            std::cerr << "Warning: Import table parsing failed: " << e.what() << std::endl;
+        }
+        
+        // Parse exports (optional, may not be present)
+        try {
+            parseExports();
+        } catch (const std::exception& e) {
+            // Export parsing failure is not critical
+            std::cerr << "Warning: Export table parsing failed: " << e.what() << std::endl;
+        }
+        
+        // Parse base relocations (optional, may not be present)
+        try {
+            parseBaseRelocations();
+        } catch (const std::exception& e) {
+            // Base relocation parsing failure is not critical
+            std::cerr << "Warning: Base relocation parsing failed: " << e.what() << std::endl;
+        }
+        
+        // If we reached here, parsing was successful
+        isValidPE = true;
+        
+    } catch (const std::exception& e) {
+        // Critical parsing error occurred
+        isValidPE = false;
+        std::cerr << "Error: PE file parsing failed: " << e.what() << std::endl;
+        throw; // Re-throw to allow caller to handle
+    }
 }
 
 void PeParser::parseDOSHeader() {
