@@ -262,6 +262,16 @@ private:
     bool findResourceData(uint32_t resourceBaseOffset, uint32_t typeDirOffset, uint32_t nameId, uint32_t& dataOffset, uint32_t& dataSize);
     bool getIconGroupData(uint32_t resourceBaseOffset, uint32_t groupIconDirOffset, std::vector<GRPICONDIRENTRY>& entries);
     
+    // Icon extraction helpers
+    struct ValidIcon {
+        IconDirEntry dirEntry;
+        std::vector<uint8_t> data;
+    };
+    
+    uint32_t getResourceDirectoryOffset();
+    bool loadIconData(uint32_t resourceOffset, uint32_t iconDirOffset, const std::vector<GRPICONDIRENTRY>& groupEntries, std::vector<ValidIcon>& validIcons);
+    bool writeIconFile(const std::string& outputPath, const std::vector<ValidIcon>& validIcons);
+    
 public:
     // Constructor/Destructor
     PeParser(const std::string& filepath);

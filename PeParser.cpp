@@ -1925,16 +1925,14 @@ bool PeParser::getIconGroupData(uint32_t resourceBaseOffset, uint32_t groupIconD
 }
 
 // Resource extraction implementation
-bool PeParser::saveIcon(const std::string& outputPath) {
-    // Resource type constants
-    const uint32_t RT_ICON = 3;
-    const uint32_t RT_GROUP_ICON = 14;
+// Icon extraction helpers
+uint32_t PeParser::getResourceDirectoryOffset() {
     const uint32_t RESOURCE_TABLE_INDEX = 2;
     
     // Check if file is valid PE
     if (!isValidPE) {
         std::cerr << "Error: Not a valid PE file" << std::endl;
-        return false;
+        return 0;
     }
     
     // Get resource directory from data directories
@@ -1944,52 +1942,27 @@ bool PeParser::saveIcon(const std::string& outputPath) {
     
     if (numberOfRvaAndSizes <= RESOURCE_TABLE_INDEX) {
         std::cerr << "Error: No resource directory in PE file" << std::endl;
-        return false;
+        return 0;
     }
     
     DataDirectory resourceDir = ntHeaders.dataDirectories[RESOURCE_TABLE_INDEX];
     
     if (resourceDir.virtualAddress == 0 || resourceDir.size == 0) {
         std::cerr << "Error: Resource directory is empty" << std::endl;
-        return false;
+        return 0;
     }
     
     // Convert RVA to file offset
     uint32_t resourceOffset = rvaToFileOffset(resourceDir.virtualAddress);
     if (resourceOffset == 0) {
         std::cerr << "Error: Invalid resource directory RVA" << std::endl;
-        return false;
+        return 0;
     }
     
-    // Find RT_GROUP_ICON directory
-    uint32_t groupIconDirOffset;
-    if (!findResourceDirectory(resourceOffset, RT_GROUP_ICON, groupIconDirOffset)) {
-        std::cerr << "Error: No icon group found in resources" << std::endl;
-        return false;
-    }
-    
-    // Get icon group data
-    std::vector<GRPICONDIRENTRY> groupEntries;
-    if (!getIconGroupData(resourceOffset, groupIconDirOffset, groupEntries)) {
-        std::cerr << "Error: Failed to read icon group data" << std::endl;
-        return false;
-    }
-    
-    // Find RT_ICON directory
-    uint32_t iconDirOffset;
-    if (!findResourceDirectory(resourceOffset, RT_ICON, iconDirOffset)) {
-        std::cerr << "Error: No icon resources found" << std::endl;
-        return false;
-    }
-    
-    // Collect valid icon data
-    struct ValidIcon {
-        IconDirEntry dirEntry;
-        std::vector<uint8_t> data;
-    };
-    
-    std::vector<ValidIcon> validIcons;
-    
+    return resourceOffset;
+}
+
+bool PeParser::loadIconData(uint32_t resourceOffset, uint32_t iconDirOffset, const std::vector<GRPICONDIRENTRY>& groupEntries, std::vector<ValidIcon>& validIcons) {
     for (const auto& groupEntry : groupEntries) {
         uint32_t dataOffset, dataSize;
         
@@ -2022,11 +1995,14 @@ bool PeParser::saveIcon(const std::string& outputPath) {
         validIcons.push_back({icoEntry, iconData});
     }
     
+    return !validIcons.empty();
+}
+
+bool PeParser::writeIconFile(const std::string& outputPath, const std::vector<ValidIcon>& validIcons) {
     if (validIcons.empty()) {
-        std::cerr << "Error: No icon data was extracted" << std::endl;
         return false;
     }
-    
+
     // Create output file
     std::ofstream outFile(outputPath, std::ios::binary);
     if (!outFile.is_open()) {
@@ -2044,10 +2020,11 @@ bool PeParser::saveIcon(const std::string& outputPath) {
     // Calculate offsets and write directory entries
     uint32_t currentImageOffset = sizeof(IconDir) + (sizeof(IconDirEntry) * validIcons.size());
     
-    for (auto& icon : validIcons) {
-        icon.dirEntry.imageOffset = currentImageOffset;
-        outFile.write(reinterpret_cast<const char*>(&icon.dirEntry), sizeof(IconDirEntry));
-        currentImageOffset += icon.dirEntry.bytesInRes;
+    for (const auto& icon : validIcons) {
+        IconDirEntry entryToWrite = icon.dirEntry;
+        entryToWrite.imageOffset = currentImageOffset;
+        outFile.write(reinterpret_cast<const char*>(&entryToWrite), sizeof(IconDirEntry));
+        currentImageOffset += entryToWrite.bytesInRes;
     }
     
     // Write icon image data
@@ -2056,9 +2033,52 @@ bool PeParser::saveIcon(const std::string& outputPath) {
     }
     
     outFile.close();
-    
-    std::cout << "Icon successfully extracted to: " << outputPath << std::endl;
-    std::cout << "Number of icon images: " << validIcons.size() << std::endl;
-    
     return true;
+}
+
+// Resource extraction implementation
+bool PeParser::saveIcon(const std::string& outputPath) {
+    // Resource type constants
+    const uint32_t RT_ICON = 3;
+    const uint32_t RT_GROUP_ICON = 14;
+    
+    uint32_t resourceOffset = getResourceDirectoryOffset();
+    if (resourceOffset == 0) {
+        return false;
+    }
+    
+    // Find RT_GROUP_ICON directory
+    uint32_t groupIconDirOffset;
+    if (!findResourceDirectory(resourceOffset, RT_GROUP_ICON, groupIconDirOffset)) {
+        std::cerr << "Error: No icon group found in resources" << std::endl;
+        return false;
+    }
+    
+    // Get icon group data
+    std::vector<GRPICONDIRENTRY> groupEntries;
+    if (!getIconGroupData(resourceOffset, groupIconDirOffset, groupEntries)) {
+        std::cerr << "Error: Failed to read icon group data" << std::endl;
+        return false;
+    }
+    
+    // Find RT_ICON directory
+    uint32_t iconDirOffset;
+    if (!findResourceDirectory(resourceOffset, RT_ICON, iconDirOffset)) {
+        std::cerr << "Error: No icon resources found" << std::endl;
+        return false;
+    }
+    
+    std::vector<ValidIcon> validIcons;
+    if (!loadIconData(resourceOffset, iconDirOffset, groupEntries, validIcons)) {
+        std::cerr << "Error: No icon data was extracted" << std::endl;
+        return false;
+    }
+    
+    if (writeIconFile(outputPath, validIcons)) {
+        std::cout << "Icon successfully extracted to: " << outputPath << std::endl;
+        std::cout << "Number of icon images: " << validIcons.size() << std::endl;
+        return true;
+    }
+    
+    return false;
 }
