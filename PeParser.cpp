@@ -71,20 +71,32 @@ template<typename T>
 T PeParser::readData(size_t offset) {
     T data;
     file.seekg(offset, std::ios::beg);
+    if (file.fail()) {
+        throw std::runtime_error("Failed to seek to offset " + std::to_string(offset));
+    }
+    
     file.read(reinterpret_cast<char*>(&data), sizeof(T));
+    if (file.fail()) {
+        throw std::runtime_error("Failed to read data at offset " + std::to_string(offset));
+    }
+    
     return data;
 }
 
 // Read null-terminated string from file at specified offset
 std::string PeParser::readString(size_t offset, size_t maxLength) {
     file.seekg(offset, std::ios::beg);
+    if (file.fail()) {
+        return "";
+    }
+
     std::string result;
     result.reserve(maxLength);
     
     char ch;
     for (size_t i = 0; i < maxLength; ++i) {
         file.read(&ch, 1);
-        if (ch == '\0' || file.eof()) {
+        if (ch == '\0' || file.eof() || file.fail()) {
             break;
         }
         result += ch;
@@ -176,11 +188,8 @@ void PeParser::parseFile() {
 }
 
 void PeParser::parseDOSHeader() {
-    // Seek to beginning of file
-    file.seekg(0, std::ios::beg);
-    
     // Read the entire DOS header structure (64 bytes)
-    file.read(reinterpret_cast<char*>(&dosHeader), sizeof(DOSHeader));
+    dosHeader = readData<DOSHeader>(0);
     
     // Validate DOS signature (MZ magic number = 0x5A4D)
     if (dosHeader.e_magic != 0x5A4D) {
@@ -241,13 +250,7 @@ void PeParser::parseRichHeader() {
     }
     
     // Read the XOR key (4 bytes after "Rich" signature)
-    file.seekg(richOffset + 4, std::ios::beg);
-    uint32_t xorKey;
-    file.read(reinterpret_cast<char*>(&xorKey), sizeof(xorKey));
-    
-    if (file.fail()) {
-        return;
-    }
+    uint32_t xorKey = readData<uint32_t>(richOffset + 4);
     
     // Find the start of Rich header by searching backwards for "DanS" XORed with the key
     // "DanS" = 0x536E6144 in little-endian
@@ -307,17 +310,15 @@ void PeParser::parseRichHeader() {
 
 void PeParser::parseNTHeaders() {
     // Seek to NT headers offset using e_lfanew from DOS header
-    file.seekg(dosHeader.e_lfanew, std::ios::beg);
-    
     // Read and validate PE signature (4 bytes: "PE\0\0")
-    file.read(reinterpret_cast<char*>(&ntHeaders.signature), sizeof(ntHeaders.signature));
+    ntHeaders.signature = readData<uint32_t>(dosHeader.e_lfanew);
     
     if (ntHeaders.signature != 0x00004550) { // "PE\0\0" in little-endian
         throw std::runtime_error("Invalid PE signature: Expected PE\\0\\0 (0x00004550)");
     }
     
     // Read file header (20 bytes)
-    file.read(reinterpret_cast<char*>(&ntHeaders.fileHeader), sizeof(FileHeader));
+    ntHeaders.fileHeader = readData<FileHeader>(dosHeader.e_lfanew + 4);
     
     // Check if optional header exists
     if (ntHeaders.fileHeader.sizeOfOptionalHeader == 0) {
@@ -325,29 +326,32 @@ void PeParser::parseNTHeaders() {
     }
     
     // Peek at the magic number from optional header to determine architecture
-    uint16_t magic;
-    std::streampos optionalHeaderStart = file.tellg();
-    file.read(reinterpret_cast<char*>(&magic), sizeof(magic));
-    file.seekg(optionalHeaderStart, std::ios::beg);  // Seek back to start of optional header
+    // Optional header starts after File Header (20 bytes) + Signature (4 bytes)
+    size_t optionalHeaderOffset = dosHeader.e_lfanew + 4 + sizeof(FileHeader);
+    uint16_t magic = readData<uint16_t>(optionalHeaderOffset);
     
     // Determine 32-bit vs 64-bit architecture from optional header magic
     if (magic == 0x10b) {
         // 32-bit PE (PE32) - base size is 96 bytes
         ntHeaders.is64Bit = false;
-        file.read(reinterpret_cast<char*>(&ntHeaders.optionalHeader32), sizeof(OptionalHeader32));
+        ntHeaders.optionalHeader32 = readData<OptionalHeader32>(optionalHeaderOffset);
         
         // Read data directories if present
         if (ntHeaders.optionalHeader32.numberOfRvaAndSizes > 0 && ntHeaders.optionalHeader32.numberOfRvaAndSizes <= 16) {
+            size_t dataDirOffset = optionalHeaderOffset + sizeof(OptionalHeader32);
+            file.seekg(dataDirOffset, std::ios::beg);
             file.read(reinterpret_cast<char*>(&ntHeaders.dataDirectories), 
                      ntHeaders.optionalHeader32.numberOfRvaAndSizes * sizeof(DataDirectory));
         }
     } else if (magic == 0x20b) {
         // 64-bit PE (PE32+) - base size is 112 bytes
         ntHeaders.is64Bit = true;
-        file.read(reinterpret_cast<char*>(&ntHeaders.optionalHeader64), sizeof(OptionalHeader64));
+        ntHeaders.optionalHeader64 = readData<OptionalHeader64>(optionalHeaderOffset);
         
         // Read data directories if present
         if (ntHeaders.optionalHeader64.numberOfRvaAndSizes > 0 && ntHeaders.optionalHeader64.numberOfRvaAndSizes <= 16) {
+            size_t dataDirOffset = optionalHeaderOffset + sizeof(OptionalHeader64);
+            file.seekg(dataDirOffset, std::ios::beg);
             file.read(reinterpret_cast<char*>(&ntHeaders.dataDirectories), 
                      ntHeaders.optionalHeader64.numberOfRvaAndSizes * sizeof(DataDirectory));
         }

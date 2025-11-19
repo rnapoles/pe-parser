@@ -43,7 +43,6 @@
 
   - [x] 3.3 Implement printNTHeadersInfo() display method
 
-
     - Display file header information (machine type, number of sections, timestamp)
     - Display optional header information (entry point, image base, subsystem)
     - Show file characteristics and architecture information
@@ -116,11 +115,9 @@
     - Format compiler version and tool information
     - _Requirements: 6.3_
 
-- [-] 8. Implement main parsing orchestration and file info
+- [x] 8. Implement main parsing orchestration and file info
 
-
-  - [ ] 8.1 Create parseFile() master method
-
+  - [x] 8.1 Create parseFile() master method
 
     - Call all individual parsing methods in correct sequence
     - Implement error handling and validation throughout parsing process
@@ -128,7 +125,7 @@
     - Handle parsing errors gracefully without crashing
     - _Requirements: 1.1, 1.2, 1.3_
 
-  - [ ] 8.2 Implement printFileInfo() general information method
+  - [x] 8.2 Implement printFileInfo() general information method
     - Display overall file information (name, size, type, architecture)
     - Show parsing status and validation results
     - Provide summary of sections, imports, and exports counts
@@ -149,15 +146,16 @@
     - Show relocation types and target addresses
     - _Requirements: 6.7_
 
-- [ ] 10. Create helper methods and error handling
-  - [ ] 10.1 Implement file I/O helper methods
+- [x] 10. Create helper methods and error handling
+
+  - [x] 10.1 Implement file I/O helper methods
     - Create template readData<T>() method for reading typed data from file
     - Create readString() method for reading null-terminated strings
     - Implement validatePESignature() method for file validation
     - Add proper error handling for file operations
     - _Requirements: 7.3, 7.4, 7.5, 1.3_
 
-  - [ ]* 10.2 Write unit tests for core functionality
+  - [x] 10.2 Write unit tests for core functionality
     - Create test cases for DOS header parsing with sample PE files
     - Test NT headers parsing with both 32-bit and 64-bit PE files
     - Validate section parsing with various section layouts
@@ -165,22 +163,23 @@
     - Test error handling with corrupted PE files
     - _Requirements: 1.3, 2.1, 2.3, 3.1, 4.1, 4.2_
 
-- [ ] 11. Create main program and compilation setup
-  - [ ] 11.1 Create main.cpp demonstration program
+- [x] 11. Create main program and compilation setup
+
+  - [x] 11.1 Create main.cpp demonstration program
     - Implement command-line argument parsing for PE file input
     - Create usage example showing all parser capabilities
     - Add error handling for invalid command-line arguments
     - Demonstrate all print methods with sample PE file
     - _Requirements: 7.1, 7.2_
 
-  - [ ] 11.2 Create Makefile for GCC compilation
+  - [x] 11.2 Create Makefile for GCC compilation
     - Set up compilation flags for C++ standard library usage
     - Configure GCC-specific compiler options for Linux and Windows
     - Add debug and release build configurations
     - Ensure proper linking and dependency management
     - _Requirements: 7.1, 7.2, 7.3_
 
-  - [ ]* 11.3 Create comprehensive integration tests
+  - [x] 11.3 Create comprehensive integration tests
     - Test complete parsing workflow with various PE file types
     - Validate cross-platform compatibility on Linux
     - Test memory usage and performance with large PE files
