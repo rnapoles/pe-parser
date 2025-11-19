@@ -208,6 +208,23 @@ struct IconDir {
     uint16_t type;
     uint16_t count;
 };
+
+struct GRPICONDIR {
+    uint16_t reserved;
+    uint16_t type;
+    uint16_t count;
+};
+
+struct GRPICONDIRENTRY {
+    uint8_t width;
+    uint8_t height;
+    uint8_t colorCount;
+    uint8_t reserved;
+    uint16_t planes;
+    uint16_t bitCount;
+    uint32_t bytesInRes;
+    uint16_t id;  // Resource ID of the icon
+};
 #pragma pack(pop)
 
 // Main PE Parser class
@@ -236,6 +253,14 @@ private:
     std::string readStringAtRVA(uint32_t rva, size_t maxLength = 256);
     void parseRegularImports(const DataDirectory& importDir);
     void parseDelayImports(const DataDirectory& delayImportDir);
+    
+    // Resource helper methods
+    ResourceDirectoryTable readResourceDirectoryTable(uint32_t offset);
+    ResourceDirectoryEntry readResourceDirectoryEntry(uint32_t offset);
+    ResourceDataEntry readResourceDataEntry(uint32_t offset);
+    bool findResourceDirectory(uint32_t resourceBaseOffset, uint32_t typeId, uint32_t& typeDirOffset);
+    bool findResourceData(uint32_t resourceBaseOffset, uint32_t typeDirOffset, uint32_t nameId, uint32_t& dataOffset, uint32_t& dataSize);
+    bool getIconGroupData(uint32_t resourceBaseOffset, uint32_t groupIconDirOffset, std::vector<GRPICONDIRENTRY>& entries);
     
 public:
     // Constructor/Destructor
