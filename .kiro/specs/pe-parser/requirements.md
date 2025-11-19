@@ -97,11 +97,11 @@ A PE (Portable Executable) Parser is a system that analyzes Windows executable f
 
 ### Requirement 7
 
-**User Story:** As a developer, I want the parser to compile on Linux, so that I can use it in cross-platform analysis tools.
+**User Story:** As a developer, I want the parser to compile on Linux and Windows, so that I can use it in cross-platform analysis tools.
 
 #### Acceptance Criteria
 
-1. THE PE_Parser SHALL compile successfully with GCC compiler on Linux systems
+1. THE PE_Parser SHALL compile successfully with GCC compiler on Linux or Windows systems
 2. THE PE_Parser SHALL use only C++ standard library functions
 3. THE PE_Parser SHALL handle Windows PE file format on non-Windows systems
 4. THE PE_Parser SHALL manage endianness and data type compatibility across platforms

@@ -181,7 +181,7 @@
 
   - [x] 11.3 Create comprehensive integration tests
     - Test complete parsing workflow with various PE file types
-    - Validate cross-platform compatibility on Linux
+    - Validate cross-platform compatibility on Linux and Windows
     - Test memory usage and performance with large PE files
     - Verify all query methods return correct results
     - _Requirements: 7.4, 1.1, 5.1, 5.2, 5.3, 5.4_

@@ -267,6 +267,7 @@ enum class ParseError {
 
 ### Platform Testing
 - Compilation testing on Linux with GCC
+- Compilation testing on Windows with GCC
 - Endianness handling verification
 - File path handling across different filesystems
 - Standard library compatibility validation
