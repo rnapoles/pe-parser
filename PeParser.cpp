@@ -16,7 +16,7 @@ PeParser::PeParser(const std::string& filepath)
     
     // Check file size
     file.seekg(0, std::ios::end);
-    std::streampos fileSize = file.tellg();
+    fileSize = file.tellg();
     file.seekg(0, std::ios::beg);
     
     if (fileSize < 64) {
@@ -914,7 +914,55 @@ void PeParser::parseExports() {
 
 // Placeholder implementations for information methods
 void PeParser::printFileInfo() {
-    // To be implemented in task 8
+    std::cout << "=== PE File Information ===" << std::endl;
+    std::cout << "File: " << filename << std::endl;
+    std::cout << "Size: " << fileSize << " bytes" << std::endl;
+    
+    if (!isValidPE) {
+        std::cout << "Status: Invalid PE file" << std::endl;
+        return;
+    }
+    
+    std::cout << "Status: Valid PE file" << std::endl;
+    
+    // Architecture
+    std::cout << "Architecture: " << (is64Bits() ? "64-bit (x64)" : "32-bit (x86)") << std::endl;
+    
+    // File Type
+    std::cout << "Type: ";
+    if (isDLL()) {
+        std::cout << "Dynamic Link Library (DLL)" << std::endl;
+    } else if (isExe()) {
+        std::cout << "Executable (EXE)" << std::endl;
+    } else {
+        std::cout << "Other" << std::endl;
+    }
+    
+    // Summary counts
+    std::cout << "\n--- Summary ---" << std::endl;
+    std::cout << "Sections: " << sectionHeaders.size() << std::endl;
+    std::cout << "Imports: " << imports.size() << " DLLs" << std::endl;
+    
+    size_t totalImportFuncs = 0;
+    for (const auto& imp : imports) {
+        totalImportFuncs += imp.functionNames.size();
+    }
+    std::cout << "  (" << totalImportFuncs << " imported functions)" << std::endl;
+    
+    std::cout << "Exports: " << exports.size() << " functions" << std::endl;
+    
+    // Base Relocations
+    size_t totalRelocs = 0;
+    for (const auto& block : baseRelocations) {
+        totalRelocs += block.entries.size();
+    }
+    std::cout << "Base Relocations: " << baseRelocations.size() << " blocks" << std::endl;
+    std::cout << "  (" << totalRelocs << " relocation entries)" << std::endl;
+    
+    // Rich Header
+    std::cout << "Rich Header: " << (richHeader.present ? "Present" : "Not Present") << std::endl;
+    
+    std::cout << "=========================" << std::endl;
 }
 
 void PeParser::printDOSHeaderInfo() {

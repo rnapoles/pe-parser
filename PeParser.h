@@ -174,6 +174,7 @@ private:
     // File handling
     std::ifstream file;
     std::string filename;
+    std::streampos fileSize;
     bool isValidPE;
     
     // PE Structures
