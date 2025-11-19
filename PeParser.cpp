@@ -1799,3 +1799,332 @@ bool PeParser::is64Bits() {
     // 0x10b = PE32 (32-bit), 0x20b = PE32+ (64-bit)
     return ntHeaders.is64Bit;
 }
+
+// Resource extraction implementation
+bool PeParser::saveIcon(const std::string& outputPath) {
+    // Resource type constants
+    const uint32_t RT_ICON = 3;
+    const uint32_t RT_GROUP_ICON = 14;
+    const uint32_t RESOURCE_TABLE_INDEX = 2;
+    
+    // Check if file is valid PE
+    if (!isValidPE) {
+        std::cerr << "Error: Not a valid PE file" << std::endl;
+        return false;
+    }
+    
+    // Get resource directory from data directories
+    uint32_t numberOfRvaAndSizes = ntHeaders.is64Bit ? 
+        ntHeaders.optionalHeader64.numberOfRvaAndSizes : 
+        ntHeaders.optionalHeader32.numberOfRvaAndSizes;
+    
+    if (numberOfRvaAndSizes <= RESOURCE_TABLE_INDEX) {
+        std::cerr << "Error: No resource directory in PE file" << std::endl;
+        return false;
+    }
+    
+    DataDirectory resourceDir = ntHeaders.dataDirectories[RESOURCE_TABLE_INDEX];
+    
+    if (resourceDir.virtualAddress == 0 || resourceDir.size == 0) {
+        std::cerr << "Error: Resource directory is empty" << std::endl;
+        return false;
+    }
+    
+    // Convert RVA to file offset
+    uint32_t resourceOffset = rvaToFileOffset(resourceDir.virtualAddress);
+    if (resourceOffset == 0) {
+        std::cerr << "Error: Invalid resource directory RVA" << std::endl;
+        return false;
+    }
+    
+    // Helper lambda to read resource directory table
+    auto readResourceDirTable = [this](uint32_t offset) -> ResourceDirectoryTable {
+        ResourceDirectoryTable table;
+        file.clear();
+        file.seekg(offset, std::ios::beg);
+        file.read(reinterpret_cast<char*>(&table), sizeof(ResourceDirectoryTable));
+        return table;
+    };
+    
+    // Helper lambda to read resource directory entry
+    auto readResourceDirEntry = [this](uint32_t offset) -> ResourceDirectoryEntry {
+        ResourceDirectoryEntry entry;
+        file.clear();
+        file.seekg(offset, std::ios::beg);
+        file.read(reinterpret_cast<char*>(&entry), sizeof(ResourceDirectoryEntry));
+        return entry;
+    };
+    
+    // Helper lambda to read resource data entry
+    auto readResourceDataEntry = [this](uint32_t offset) -> ResourceDataEntry {
+        ResourceDataEntry entry;
+        file.clear();
+        file.seekg(offset, std::ios::beg);
+        file.read(reinterpret_cast<char*>(&entry), sizeof(ResourceDataEntry));
+        return entry;
+    };
+    
+    // Read root resource directory
+    ResourceDirectoryTable rootDir = readResourceDirTable(resourceOffset);
+    uint32_t totalEntries = rootDir.numberOfNamedEntries + rootDir.numberOfIdEntries;
+    
+    // Find RT_GROUP_ICON entry in root directory
+    uint32_t groupIconDirOffset = 0;
+    uint32_t currentOffset = resourceOffset + sizeof(ResourceDirectoryTable);
+    
+    for (uint32_t i = 0; i < totalEntries; ++i) {
+        ResourceDirectoryEntry entry = readResourceDirEntry(currentOffset);
+        
+        // Check if this is RT_GROUP_ICON (ID = 14)
+        if ((entry.nameOffsetOrId & 0x80000000) == 0 && entry.nameOffsetOrId == RT_GROUP_ICON) {
+            // Check if it points to a subdirectory
+            if (entry.dataOffsetOrSubdir & 0x80000000) {
+                groupIconDirOffset = resourceOffset + (entry.dataOffsetOrSubdir & 0x7FFFFFFF);
+                break;
+            }
+        }
+        
+        currentOffset += sizeof(ResourceDirectoryEntry);
+    }
+    
+    if (groupIconDirOffset == 0) {
+        std::cerr << "Error: No icon group found in resources" << std::endl;
+        return false;
+    }
+    
+    // Read group icon directory (second level - icon group IDs)
+    ResourceDirectoryTable groupIconDir = readResourceDirTable(groupIconDirOffset);
+    totalEntries = groupIconDir.numberOfNamedEntries + groupIconDir.numberOfIdEntries;
+    
+    if (totalEntries == 0) {
+        std::cerr << "Error: No icon groups found" << std::endl;
+        return false;
+    }
+    
+    // Get first icon group (usually the main icon)
+    currentOffset = groupIconDirOffset + sizeof(ResourceDirectoryTable);
+    ResourceDirectoryEntry firstGroupEntry = readResourceDirEntry(currentOffset);
+    
+    if ((firstGroupEntry.dataOffsetOrSubdir & 0x80000000) == 0) {
+        std::cerr << "Error: Invalid icon group entry" << std::endl;
+        return false;
+    }
+    
+    // Read third level (language)
+    uint32_t languageDirOffset = resourceOffset + (firstGroupEntry.dataOffsetOrSubdir & 0x7FFFFFFF);
+    ResourceDirectoryTable languageDir = readResourceDirTable(languageDirOffset);
+    totalEntries = languageDir.numberOfNamedEntries + languageDir.numberOfIdEntries;
+    
+    if (totalEntries == 0) {
+        std::cerr << "Error: No language entries for icon group" << std::endl;
+        return false;
+    }
+    
+    // Get first language entry
+    currentOffset = languageDirOffset + sizeof(ResourceDirectoryTable);
+    ResourceDirectoryEntry languageEntry = readResourceDirEntry(currentOffset);
+    
+    if (languageEntry.dataOffsetOrSubdir & 0x80000000) {
+        std::cerr << "Error: Expected data entry, got subdirectory" << std::endl;
+        return false;
+    }
+    
+    // Read the icon group data
+    ResourceDataEntry groupDataEntry = readResourceDataEntry(resourceOffset + languageEntry.dataOffsetOrSubdir);
+    uint32_t groupDataOffset = rvaToFileOffset(groupDataEntry.dataRVA);
+    
+    if (groupDataOffset == 0 || groupDataEntry.size == 0) {
+        std::cerr << "Error: Invalid icon group data" << std::endl;
+        return false;
+    }
+    
+    // Read icon group header
+    file.clear();
+    file.seekg(groupDataOffset, std::ios::beg);
+    
+    #pragma pack(push, 2)
+    struct GRPICONDIR {
+        uint16_t reserved;
+        uint16_t type;
+        uint16_t count;
+    };
+    
+    struct GRPICONDIRENTRY {
+        uint8_t width;
+        uint8_t height;
+        uint8_t colorCount;
+        uint8_t reserved;
+        uint16_t planes;
+        uint16_t bitCount;
+        uint32_t bytesInRes;
+        uint16_t id;  // Resource ID of the icon
+    };
+    #pragma pack(pop)
+    
+    GRPICONDIR groupHeader;
+    file.read(reinterpret_cast<char*>(&groupHeader), sizeof(GRPICONDIR));
+    
+    if (file.fail() || groupHeader.count == 0) {
+        std::cerr << "Error: Failed to read icon group header" << std::endl;
+        return false;
+    }
+    
+    // Read all icon directory entries
+    std::vector<GRPICONDIRENTRY> groupEntries(groupHeader.count);
+    file.read(reinterpret_cast<char*>(groupEntries.data()), sizeof(GRPICONDIRENTRY) * groupHeader.count);
+    
+    if (file.fail()) {
+        std::cerr << "Error: Failed to read icon group entries" << std::endl;
+        return false;
+    }
+    
+    // Now find RT_ICON entries in root directory
+    rootDir = readResourceDirTable(resourceOffset);
+    totalEntries = rootDir.numberOfNamedEntries + rootDir.numberOfIdEntries;
+    
+    uint32_t iconDirOffset = 0;
+    currentOffset = resourceOffset + sizeof(ResourceDirectoryTable);
+    
+    for (uint32_t i = 0; i < totalEntries; ++i) {
+        ResourceDirectoryEntry entry = readResourceDirEntry(currentOffset);
+        
+        // Check if this is RT_ICON (ID = 3)
+        if ((entry.nameOffsetOrId & 0x80000000) == 0 && entry.nameOffsetOrId == RT_ICON) {
+            if (entry.dataOffsetOrSubdir & 0x80000000) {
+                iconDirOffset = resourceOffset + (entry.dataOffsetOrSubdir & 0x7FFFFFFF);
+                break;
+            }
+        }
+        
+        currentOffset += sizeof(ResourceDirectoryEntry);
+    }
+    
+    if (iconDirOffset == 0) {
+        std::cerr << "Error: No icon resources found" << std::endl;
+        return false;
+    }
+    
+    // Collect valid icon data first
+    struct ValidIcon {
+        IconDirEntry dirEntry;
+        std::vector<uint8_t> data;
+    };
+    
+    std::vector<ValidIcon> validIcons;
+    
+    for (uint16_t i = 0; i < groupHeader.count; ++i) {
+        const GRPICONDIRENTRY& groupEntry = groupEntries[i];
+        
+        // Find the corresponding RT_ICON resource
+        ResourceDirectoryTable iconDir = readResourceDirTable(iconDirOffset);
+        uint32_t iconEntries = iconDir.numberOfNamedEntries + iconDir.numberOfIdEntries;
+        
+        uint32_t iconLangDirOffset = 0;
+        uint32_t searchOffset = iconDirOffset + sizeof(ResourceDirectoryTable);
+        
+        for (uint32_t j = 0; j < iconEntries; ++j) {
+            ResourceDirectoryEntry iconEntry = readResourceDirEntry(searchOffset);
+            
+            // Check if this matches the icon ID
+            if ((iconEntry.nameOffsetOrId & 0x80000000) == 0 && iconEntry.nameOffsetOrId == groupEntry.id) {
+                if (iconEntry.dataOffsetOrSubdir & 0x80000000) {
+                    iconLangDirOffset = resourceOffset + (iconEntry.dataOffsetOrSubdir & 0x7FFFFFFF);
+                    break;
+                }
+            }
+            
+            searchOffset += sizeof(ResourceDirectoryEntry);
+        }
+        
+        if (iconLangDirOffset == 0) {
+            continue; // Skip if not found
+        }
+        
+        // Read language directory for this icon
+        ResourceDirectoryTable iconLangDir = readResourceDirTable(iconLangDirOffset);
+        uint32_t langEntries = iconLangDir.numberOfNamedEntries + iconLangDir.numberOfIdEntries;
+        
+        if (langEntries == 0) {
+            continue;
+        }
+        
+        // Get first language entry
+        searchOffset = iconLangDirOffset + sizeof(ResourceDirectoryTable);
+        ResourceDirectoryEntry iconLangEntry = readResourceDirEntry(searchOffset);
+        
+        if (iconLangEntry.dataOffsetOrSubdir & 0x80000000) {
+            continue;
+        }
+        
+        // Read icon data entry
+        ResourceDataEntry iconDataEntry = readResourceDataEntry(resourceOffset + iconLangEntry.dataOffsetOrSubdir);
+        uint32_t iconDataOffset = rvaToFileOffset(iconDataEntry.dataRVA);
+        
+        if (iconDataOffset == 0 || iconDataEntry.size == 0) {
+            continue;
+        }
+        
+        // Read icon data
+        std::vector<uint8_t> iconData(iconDataEntry.size);
+        file.clear();
+        file.seekg(iconDataOffset, std::ios::beg);
+        file.read(reinterpret_cast<char*>(iconData.data()), iconDataEntry.size);
+        
+        if (file.fail()) {
+            continue;
+        }
+        
+        // Create icon directory entry
+        IconDirEntry icoEntry;
+        icoEntry.width = groupEntry.width;
+        icoEntry.height = groupEntry.height;
+        icoEntry.colorCount = groupEntry.colorCount;
+        icoEntry.reserved = 0;
+        icoEntry.planes = groupEntry.planes;
+        icoEntry.bitCount = groupEntry.bitCount;
+        icoEntry.bytesInRes = iconDataEntry.size;
+        icoEntry.imageOffset = 0; // Will be set later
+        
+        validIcons.push_back({icoEntry, iconData});
+    }
+    
+    if (validIcons.empty()) {
+        std::cerr << "Error: No icon data was extracted" << std::endl;
+        return false;
+    }
+    
+    // Create output file
+    std::ofstream outFile(outputPath, std::ios::binary);
+    if (!outFile.is_open()) {
+        std::cerr << "Error: Failed to create output file: " << outputPath << std::endl;
+        return false;
+    }
+    
+    // Write ICO file header
+    IconDir icoHeader;
+    icoHeader.reserved = 0;
+    icoHeader.type = 1;  // 1 = ICO format
+    icoHeader.count = static_cast<uint16_t>(validIcons.size());
+    outFile.write(reinterpret_cast<const char*>(&icoHeader), sizeof(IconDir));
+    
+    // Calculate offsets and write directory entries
+    uint32_t currentImageOffset = sizeof(IconDir) + (sizeof(IconDirEntry) * validIcons.size());
+    
+    for (auto& icon : validIcons) {
+        icon.dirEntry.imageOffset = currentImageOffset;
+        outFile.write(reinterpret_cast<const char*>(&icon.dirEntry), sizeof(IconDirEntry));
+        currentImageOffset += icon.dirEntry.bytesInRes;
+    }
+    
+    // Write icon image data
+    for (const auto& icon : validIcons) {
+        outFile.write(reinterpret_cast<const char*>(icon.data.data()), icon.data.size());
+    }
+    
+    outFile.close();
+    
+    std::cout << "Icon successfully extracted to: " << outputPath << std::endl;
+    std::cout << "Number of icon images: " << validIcons.size() << std::endl;
+    
+    return true;
+}

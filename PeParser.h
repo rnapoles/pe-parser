@@ -168,6 +168,48 @@ struct BaseRelocationEntry {
     std::vector<uint16_t> entries; // Relocation entries (type + offset)
 };
 
+// Resource Directory structures
+struct ResourceDirectoryTable {
+    uint32_t characteristics;
+    uint32_t timeDateStamp;
+    uint16_t majorVersion;
+    uint16_t minorVersion;
+    uint16_t numberOfNamedEntries;
+    uint16_t numberOfIdEntries;
+};
+
+struct ResourceDirectoryEntry {
+    uint32_t nameOffsetOrId;
+    uint32_t dataOffsetOrSubdir;
+};
+
+struct ResourceDataEntry {
+    uint32_t dataRVA;
+    uint32_t size;
+    uint32_t codepage;
+    uint32_t reserved;
+};
+
+// Icon file format structures
+#pragma pack(push, 2)
+struct IconDirEntry {
+    uint8_t width;
+    uint8_t height;
+    uint8_t colorCount;
+    uint8_t reserved;
+    uint16_t planes;
+    uint16_t bitCount;
+    uint32_t bytesInRes;
+    uint32_t imageOffset;
+};
+
+struct IconDir {
+    uint16_t reserved;
+    uint16_t type;
+    uint16_t count;
+};
+#pragma pack(pop)
+
 // Main PE Parser class
 class PeParser {
 private:
@@ -228,6 +270,9 @@ public:
     bool isExe();
     bool isDLL();
     bool is64Bits();
+    
+    // Resource extraction methods
+    bool saveIcon(const std::string& outputPath);
 };
 
 #endif // PE_PARSER_H
